@@ -17,10 +17,21 @@ const app = express();
 // In production it will be https://ifrtest.ca
 const FRONTEND_URL = (process.env.FRONTEND_URL || '').trim().replace(/\/$/, '');
 
-const allowedOrigins = FRONTEND_URL
-  .split(',')
-  .map(s => s.trim())
-  .filter(Boolean);
+// Build allowed origins: include FRONTEND_URL plus www/non-www variant automatically
+const allowedOrigins = (() => {
+  const base = FRONTEND_URL.split(',').map(s => s.trim()).filter(Boolean);
+  const extras = [];
+  base.forEach(url => {
+    if (url.includes('://www.')) {
+      extras.push(url.replace('://www.', '://'));
+    } else if (url.startsWith('https://') || url.startsWith('http://')) {
+      const proto = url.split('://')[0];
+      const host  = url.split('://')[1];
+      extras.push(`${proto}://www.${host}`);
+    }
+  });
+  return [...new Set([...base, ...extras, 'http://localhost:8080', 'http://localhost:3001'])];
+})();
 
 app.use(cors({
   origin: function (origin, callback) {
