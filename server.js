@@ -15,7 +15,9 @@ const app = express();
 // Allow requests from your frontend. In development this is typically
 // http://localhost:8080 (or wherever you serve the static files).
 // In production it will be https://ifrtest.ca
-const allowedOrigins = (process.env.FRONTEND_URL || '')
+const FRONTEND_URL = (process.env.FRONTEND_URL || '').trim().replace(/\/$/, '');
+
+const allowedOrigins = FRONTEND_URL
   .split(',')
   .map(s => s.trim())
   .filter(Boolean);
@@ -72,8 +74,8 @@ app.post('/create-checkout-session', async (req, res) => {
         },
       ],
       // After payment, Stripe appends ?session_id={CHECKOUT_SESSION_ID} automatically
-      success_url: `${process.env.FRONTEND_URL}/payment_success.html?session_id={CHECKOUT_SESSION_ID}`,
-      cancel_url:  `${process.env.FRONTEND_URL}/index.html#pricing`,
+      success_url: `${FRONTEND_URL}/payment_success.html?session_id={CHECKOUT_SESSION_ID}`,
+      cancel_url:  `${FRONTEND_URL}/index.html#pricing`,
       // Let Stripe collect the billing address for Canadian tax compliance
       billing_address_collection: 'auto',
     });
