@@ -8,6 +8,9 @@ require('dotenv').config();
 const express = require('express');
 const cors    = require('cors');
 const stripe  = require('stripe')(process.env.STRIPE_SECRET_KEY);
+const { Resend } = require('resend');
+
+const resend = new Resend(process.env.RESEND_API_KEY);
 
 const app = express();
 
@@ -124,6 +127,46 @@ app.get('/verify-session', async (req, res) => {
   }
 });
 
+// ─── Email helpers ────────────────────────────────────────────────────────────
+async function sendWelcomeEmail(to, plan) {
+  const isLifetime = plan === 'lifetime';
+  const planLabel  = isLifetime ? 'Pro Lifetime' : 'Pro Monthly';
+  const planDetail = isLifetime
+    ? 'You have lifetime access — you will never be charged again.'
+    : 'Your subscription renews monthly. You can cancel anytime by emailing ifrtest.ca@gmail.com.';
+
+  await resend.emails.send({
+    from: 'IFRTEST.ca <onboarding@resend.dev>',
+    to,
+    subject: `Welcome to IFRTEST Pro — You're all set! ✈️`,
+    html: `
+      <div style="background:#05080f;color:#e8edf5;font-family:Arial,sans-serif;padding:40px;max-width:600px;margin:0 auto;border-radius:8px;">
+        <div style="text-align:center;margin-bottom:32px;">
+          <h1 style="color:#00d4a0;font-size:28px;margin:0;">IFRTEST.ca</h1>
+          <p style="color:rgba(200,210,230,0.5);margin:4px 0 0;">Canadian IFR Exam Prep</p>
+        </div>
+        <h2 style="color:#e8edf5;font-size:22px;">Welcome to ${planLabel}! ✈️</h2>
+        <p style="color:rgba(200,210,230,0.75);line-height:1.7;">
+          Your payment was successful and your Pro access is now active. You have full access to all 382 IFR written exam questions, the timed exam simulator, flashcards, and all study tools.
+        </p>
+        <div style="background:rgba(0,212,160,0.08);border:1px solid rgba(0,212,160,0.25);border-radius:6px;padding:16px 20px;margin:24px 0;">
+          <p style="margin:0;color:#00d4a0;font-weight:bold;">Plan: ${planLabel}</p>
+          <p style="margin:6px 0 0;color:rgba(200,210,230,0.6);font-size:14px;">${planDetail}</p>
+        </div>
+        <div style="text-align:center;margin:32px 0;">
+          <a href="https://ifrtest.ca/ifrtest_quiz.html" style="background:#00d4a0;color:#05080f;text-decoration:none;padding:14px 32px;border-radius:6px;font-weight:bold;font-size:16px;">Start Studying →</a>
+        </div>
+        <p style="color:rgba(200,210,230,0.4);font-size:13px;line-height:1.6;">
+          Questions? Reply to this email or contact us at <a href="mailto:ifrtest.ca@gmail.com" style="color:#00d4a0;">ifrtest.ca@gmail.com</a>
+        </p>
+        <hr style="border:none;border-top:1px solid rgba(0,212,160,0.1);margin:24px 0;">
+        <p style="color:rgba(200,210,230,0.25);font-size:11px;text-align:center;">IFRTEST.ca · Canadian IFR Written Exam Prep</p>
+      </div>
+    `,
+  });
+  console.log('[email] Welcome email sent to', to);
+}
+
 // ─── POST /webhook ────────────────────────────────────────────────────────────
 // Stripe calls this URL automatically when payment events happen.
 // You register this URL in the Stripe Dashboard → Webhooks.
@@ -143,15 +186,20 @@ app.post('/webhook', express.raw({ type: 'application/json' }), (req, res) => {
   }
 
   switch (event.type) {
-    case 'checkout.session.completed':
-      console.log('[webhook] Payment complete:', event.data.object.id);
+    case 'checkout.session.completed': {
+      const session = event.data.object;
+      const customerEmail = session.customer_details?.email;
+      const plan = session.mode === 'subscription' ? 'monthly' : 'lifetime';
+      console.log('[webhook] Payment complete:', session.id, customerEmail, plan);
+      if (customerEmail) {
+        sendWelcomeEmail(customerEmail, plan).catch(err =>
+          console.error('[webhook] Failed to send welcome email:', err.message)
+        );
+      }
       break;
+    }
 
     case 'customer.subscription.deleted':
-      // A monthly subscription was cancelled. Since pro access is stored in
-      // the user's browser localStorage (not a server-side database), there is
-      // nothing to revoke automatically here. If you add user accounts later,
-      // you would revoke access in your database at this point.
       console.log('[webhook] Subscription cancelled:', event.data.object.id);
       break;
 
@@ -160,7 +208,6 @@ app.post('/webhook', express.raw({ type: 'application/json' }), (req, res) => {
       break;
 
     default:
-      // Silently ignore other event types
       break;
   }
 
