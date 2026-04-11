@@ -136,7 +136,7 @@ async function sendWelcomeEmail(to, plan) {
     : 'Your subscription renews monthly. You can cancel anytime by emailing ifrtest.ca@gmail.com.';
 
   await resend.emails.send({
-    from: 'IFRTEST.ca <onboarding@resend.dev>',
+    from: 'IFRTEST.ca <noreply@ifrtest.ca>',
     to,
     subject: `Welcome to IFRTEST Pro — You're all set! ✈️`,
     html: `
