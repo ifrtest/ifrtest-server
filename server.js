@@ -65,6 +65,37 @@ app.get('/', (req, res) => {
   res.json({ status: 'ok', service: 'ifrtest-stripe-server' });
 });
 
+// ─── Free question tracking (fingerprint-based) ───────────────────────────────
+// Tracks free question usage server-side so incognito users can't reset by
+// clearing localStorage. Fingerprint is generated client-side from browser
+// characteristics (canvas, screen, UA) — consistent across incognito sessions.
+const freeUsageMap = new Map(); // fp -> { count, lastSeen }
+
+// Clean up entries older than 30 days every hour
+setInterval(() => {
+  const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000;
+  for (const [key, val] of freeUsageMap) {
+    if (val.lastSeen < cutoff) freeUsageMap.delete(key);
+  }
+}, 60 * 60 * 1000);
+
+app.get('/free-status', (req, res) => {
+  const { fp } = req.query;
+  if (!fp || typeof fp !== 'string' || fp.length > 32) return res.json({ count: 0 });
+  const entry = freeUsageMap.get(fp);
+  res.json({ count: entry ? entry.count : 0 });
+});
+
+app.post('/track-free', (req, res) => {
+  const { fp } = req.body;
+  if (!fp || typeof fp !== 'string' || fp.length > 32) return res.json({ ok: true });
+  const entry = freeUsageMap.get(fp) || { count: 0, lastSeen: Date.now() };
+  entry.count = Math.min(entry.count + 1, 20);
+  entry.lastSeen = Date.now();
+  freeUsageMap.set(fp, entry);
+  res.json({ count: entry.count });
+});
+
 // ─── POST /create-checkout-session ────────────────────────────────────────────
 // Called by the frontend when a user clicks "Get Pro Access".
 // Body: { plan: 'monthly' | 'lifetime' }
