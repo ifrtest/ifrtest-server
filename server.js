@@ -5,12 +5,14 @@
 
 require('dotenv').config();
 
-const express = require('express');
-const cors    = require('cors');
-const stripe  = require('stripe')(process.env.STRIPE_SECRET_KEY);
+const express    = require('express');
+const cors       = require('cors');
+const stripe     = require('stripe')(process.env.STRIPE_SECRET_KEY);
 const { Resend } = require('resend');
+const Anthropic  = require('@anthropic-ai/sdk');
 
-const resend = new Resend(process.env.RESEND_API_KEY);
+const resend    = new Resend(process.env.RESEND_API_KEY);
+const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
 const app = express();
 
@@ -143,6 +145,63 @@ app.get('/verify-session', async (req, res) => {
   } catch (err) {
     console.error('[verify-session]', err.message);
     res.status(500).json({ error: 'Could not verify session.' });
+  }
+});
+
+// ─── POST /ai-explain ─────────────────────────────────────────────────────────
+// Called when a Pro user taps "Ask AI Instructor" after answering a question.
+// Body: { question, answers, correct, selected, explanation, category }
+// Returns: { response: '...' }
+app.post('/ai-explain', async (req, res) => {
+  if (!process.env.ANTHROPIC_API_KEY) {
+    return res.status(503).json({ error: 'AI Instructor is not configured.' });
+  }
+
+  const { question, answers, correct, selected, explanation, category } = req.body;
+
+  if (!question || !answers || correct === undefined) {
+    return res.status(400).json({ error: 'Missing required fields.' });
+  }
+
+  const letters  = ['A', 'B', 'C', 'D'];
+  const answerList = answers.map((a, i) => `${letters[i]}) ${a}`).join('\n');
+  const correctAnswer  = `${letters[correct]}) ${answers[correct]}`;
+  const selectedAnswer = selected !== undefined && selected !== null
+    ? `${letters[selected]}) ${answers[selected]}`
+    : null;
+  const gotItRight = selected === correct;
+
+  const userContext = selectedAnswer && !gotItRight
+    ? `The student chose: ${selectedAnswer} (incorrect).`
+    : gotItRight
+    ? `The student answered correctly.`
+    : ``;
+
+  const prompt = `You are an experienced Canadian IFR flight instructor helping a student prepare for the Transport Canada IFR written exam.
+
+Category: ${category || 'IFR'}
+Question: ${question}
+
+Answer choices:
+${answerList}
+
+Correct answer: ${correctAnswer}
+${userContext}
+${explanation ? `Reference note: ${explanation}` : ''}
+
+Give a clear, direct explanation of why ${correctAnswer} is correct. ${!gotItRight && selectedAnswer ? `Also briefly explain why "${selectedAnswer}" is wrong.` : ''} Keep it under 150 words. Use plain language — no bullet points, no headers. Reference the specific Canadian regulation, AIM section, or principle where relevant. Speak directly to the student.`;
+
+  try {
+    const message = await anthropic.messages.create({
+      model:      'claude-haiku-4-5-20251001',
+      max_tokens: 300,
+      messages:   [{ role: 'user', content: prompt }],
+    });
+
+    res.json({ response: message.content[0].text });
+  } catch (err) {
+    console.error('[ai-explain]', err.message);
+    res.status(500).json({ error: 'AI Instructor is unavailable right now.' });
   }
 });
 
