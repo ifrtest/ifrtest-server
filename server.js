@@ -127,8 +127,78 @@ app.get('/verify-session', async (req, res) => {
   }
 });
 
+// ─── POST /send-restore-link ──────────────────────────────────────────────────
+// Called when a returning customer wants to restore access on a new device.
+// Body: { email: 'user@example.com' }
+// Always returns { sent: true } to avoid leaking whether an email exists.
+app.post('/send-restore-link', async (req, res) => {
+  const { email } = req.body;
+
+  if (!email || typeof email !== 'string' || !email.includes('@')) {
+    return res.status(400).json({ error: 'Valid email required.' });
+  }
+
+  try {
+    // Look up Stripe customers by email
+    const customers = await stripe.customers.list({ email: email.toLowerCase().trim(), limit: 5 });
+
+    let sessionId = null;
+    for (const customer of customers.data) {
+      const sessions = await stripe.checkout.sessions.list({ customer: customer.id, limit: 20 });
+      const paid = sessions.data.find(s => s.payment_status === 'paid');
+      if (paid) {
+        sessionId = paid.id;
+        break;
+      }
+    }
+
+    if (sessionId) {
+      const accessUrl = `${FRONTEND_URL}/payment_success.html?session_id=${sessionId}`;
+      await resend.emails.send({
+        from: 'IFRTEST.ca <noreply@ifrtest.ca>',
+        to: email,
+        subject: 'Your IFRTEST Pro access link ✈️',
+        html: `
+          <div style="background:#05080f;color:#e8edf5;font-family:Arial,sans-serif;padding:40px;max-width:600px;margin:0 auto;border-radius:8px;">
+            <div style="text-align:center;margin-bottom:32px;">
+              <h1 style="color:#00d4a0;font-size:28px;margin:0;">IFRTEST.ca</h1>
+              <p style="color:rgba(200,210,230,0.5);margin:4px 0 0;">Canadian IFR Exam Prep</p>
+            </div>
+            <h2 style="color:#e8edf5;font-size:20px;">Here's your access link</h2>
+            <p style="color:rgba(200,210,230,0.75);line-height:1.7;">
+              Click the button below to restore your Pro access on this device. The link will verify your purchase and unlock full access automatically.
+            </p>
+            <div style="text-align:center;margin:32px 0;">
+              <a href="${accessUrl}" style="background:#00d4a0;color:#05080f;text-decoration:none;padding:14px 32px;border-radius:6px;font-weight:bold;font-size:16px;">Restore My Access →</a>
+            </div>
+            <p style="color:rgba(200,210,230,0.4);font-size:13px;line-height:1.6;">
+              If you didn't request this, you can ignore this email.<br>
+              Questions? Contact us at <a href="mailto:ifrtest.ca@gmail.com" style="color:#00d4a0;">ifrtest.ca@gmail.com</a>
+            </p>
+            <hr style="border:none;border-top:1px solid rgba(0,212,160,0.1);margin:24px 0;">
+            <p style="color:rgba(200,210,230,0.25);font-size:11px;text-align:center;">IFRTEST.ca · Canadian IFR Written Exam Prep</p>
+          </div>
+        `,
+      });
+      console.log('[send-restore-link] Access email sent to', email);
+    } else {
+      console.log('[send-restore-link] No paid session found for', email);
+    }
+  } catch (err) {
+    console.error('[send-restore-link]', err.message);
+  }
+
+  // Always respond with success to prevent email enumeration
+  res.json({ sent: true });
+});
+
 // ─── Email helpers ────────────────────────────────────────────────────────────
 async function sendWelcomeEmail(to, plan) {
+  if (!process.env.RESEND_API_KEY) {
+    console.error('[email] RESEND_API_KEY is not set — skipping welcome email');
+    return;
+  }
+
   const isLifetime = plan === 'lifetime';
   const planLabel  = isLifetime ? 'Pro Lifetime' : 'Pro Monthly';
   const planDetail = isLifetime
@@ -167,6 +237,29 @@ async function sendWelcomeEmail(to, plan) {
   console.log('[email] Welcome email sent to', to);
 }
 
+// ─── POST /admin/resend-welcome ───────────────────────────────────────────────
+// Manual resend for cases where webhook email failed (e.g. DNS not yet verified).
+// Body: { secret: '...', email: '...', plan: 'monthly' | 'lifetime' }
+app.post('/admin/resend-welcome', async (req, res) => {
+  const { secret, email, plan } = req.body;
+  const ADMIN_SECRET = process.env.ADMIN_SECRET || 'ifrtest-admin-2024';
+
+  if (secret !== ADMIN_SECRET) {
+    return res.status(403).json({ error: 'Forbidden' });
+  }
+  if (!email || !plan) {
+    return res.status(400).json({ error: 'email and plan required' });
+  }
+
+  try {
+    await sendWelcomeEmail(email, plan);
+    res.json({ sent: true });
+  } catch (err) {
+    console.error('[admin/resend-welcome]', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ─── POST /webhook ────────────────────────────────────────────────────────────
 // Stripe calls this URL automatically when payment events happen.
 // You register this URL in the Stripe Dashboard → Webhooks.
@@ -192,9 +285,11 @@ app.post('/webhook', express.raw({ type: 'application/json' }), (req, res) => {
       const plan = session.mode === 'subscription' ? 'monthly' : 'lifetime';
       console.log('[webhook] Payment complete:', session.id, customerEmail, plan);
       if (customerEmail) {
-        sendWelcomeEmail(customerEmail, plan).catch(err =>
-          console.error('[webhook] Failed to send welcome email:', err.message)
-        );
+        sendWelcomeEmail(customerEmail, plan)
+          .then(() => console.log('[webhook] Welcome email dispatched OK'))
+          .catch(err => console.error('[webhook] Welcome email FAILED:', err.message, err.statusCode || ''));
+      } else {
+        console.warn('[webhook] No customer email in session:', session.id);
       }
       break;
     }
