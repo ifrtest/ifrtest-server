@@ -270,6 +270,50 @@ app.post('/send-restore-link', async (req, res) => {
   res.json({ sent: true });
 });
 
+// ─── POST /verify-email ───────────────────────────────────────────────────────
+// Instantly verifies if an email has an active Pro subscription in Stripe.
+// Returns { success: true, plan, sessionId } or { success: false }
+app.post('/verify-email', async (req, res) => {
+  const { email } = req.body;
+  if (!email || typeof email !== 'string' || !email.includes('@')) {
+    return res.status(400).json({ error: 'Valid email required.' });
+  }
+
+  try {
+    const customers = await stripe.customers.list({ email: email.toLowerCase().trim(), limit: 5 });
+
+    for (const customer of customers.data) {
+      const sessions = await stripe.checkout.sessions.list({
+        customer: customer.id,
+        limit: 20,
+        expand: ['data.subscription'],
+      });
+
+      for (const session of sessions.data) {
+        // Lifetime purchase
+        if (session.mode === 'payment' && session.payment_status === 'paid') {
+          console.log('[verify-email] lifetime access granted for', email);
+          return res.json({ success: true, plan: 'lifetime', sessionId: session.id });
+        }
+        // Monthly subscription — check it's still active
+        if (session.mode === 'subscription' && session.subscription) {
+          const sub = session.subscription;
+          if (['active', 'trialing', 'past_due'].includes(sub.status)) {
+            console.log('[verify-email] subscription access granted for', email, '- status:', sub.status);
+            return res.json({ success: true, plan: 'monthly', sessionId: session.id });
+          }
+        }
+      }
+    }
+
+    console.log('[verify-email] no active subscription found for', email);
+    return res.json({ success: false });
+  } catch (err) {
+    console.error('[verify-email]', err.message);
+    return res.status(500).json({ success: false });
+  }
+});
+
 // ─── Email helpers ────────────────────────────────────────────────────────────
 async function sendWelcomeEmail(to, plan) {
   if (!process.env.RESEND_API_KEY) {
