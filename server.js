@@ -114,13 +114,32 @@ app.get('/verify-session', async (req, res) => {
   }
 
   try {
-    const session = await stripe.checkout.sessions.retrieve(session_id);
-    const paid = session.payment_status === 'paid';
-
-    res.json({
-      success: paid,
-      plan: session.mode === 'subscription' ? 'monthly' : 'lifetime',
+    const session = await stripe.checkout.sessions.retrieve(session_id, {
+      expand: ['subscription'],
     });
+
+    let success = false;
+    let plan    = 'lifetime';
+
+    if (session.mode === 'payment') {
+      // One-time lifetime purchase — valid forever as long as payment was made
+      success = session.payment_status === 'paid';
+      plan    = 'lifetime';
+    } else if (session.mode === 'subscription') {
+      // Monthly subscription — check the subscription is still active
+      plan = 'monthly';
+      const sub = session.subscription;
+      if (sub && typeof sub === 'object') {
+        // active / trialing / past_due all get access (past_due = payment retry in progress)
+        success = ['active', 'trialing', 'past_due'].includes(sub.status);
+        console.log('[verify-session] subscription status:', sub.status, '→ access:', success);
+      } else {
+        // Subscription object missing — fall back to payment_status check
+        success = session.payment_status === 'paid';
+      }
+    }
+
+    res.json({ success, plan });
   } catch (err) {
     console.error('[verify-session]', err.message);
     res.status(500).json({ error: 'Could not verify session.' });
