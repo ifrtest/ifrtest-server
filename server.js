@@ -196,9 +196,9 @@ app.post('/ai-explain', async (req, res) => {
 
   const letters  = ['A', 'B', 'C', 'D'];
   const answerList = answers.map((a, i) => `${letters[i]}) ${a}`).join('\n');
-  const correctAnswer  = `${letters[correct]}) ${answers[correct]}`;
+  const correctAnswer  = `${answers[correct]}`;
   const selectedAnswer = selected !== undefined && selected !== null
-    ? `${letters[selected]}) ${answers[selected]}`
+    ? `${answers[selected]}`
     : null;
   const gotItRight = Number(selected) === Number(correct);
 
