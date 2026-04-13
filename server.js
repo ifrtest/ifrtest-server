@@ -200,27 +200,35 @@ app.post('/ai-explain', async (req, res) => {
   const selectedAnswer = selected !== undefined && selected !== null
     ? `${letters[selected]}) ${answers[selected]}`
     : null;
-  const gotItRight = selected === correct;
+  const gotItRight = Number(selected) === Number(correct);
 
-  const userContext = selectedAnswer && !gotItRight
-    ? `The student chose: ${selectedAnswer} (incorrect).`
-    : gotItRight
-    ? `The student answered correctly.`
-    : ``;
+  const prompt = gotItRight
+    ? `You are an experienced Canadian IFR flight instructor. A student just answered a practice question correctly.
 
-  const prompt = `You are an experienced Canadian IFR flight instructor helping a student prepare for the Transport Canada IFR written exam.
-
-Category: ${category || 'IFR'}
 Question: ${question}
 
 Answer choices:
 ${answerList}
 
 Correct answer: ${correctAnswer}
-${userContext}
 ${explanation ? `Reference note: ${explanation}` : ''}
 
-Give a clear, direct explanation of why ${correctAnswer} is correct. ${!gotItRight && selectedAnswer ? `Also briefly explain why "${selectedAnswer}" is wrong.` : ''} Keep it under 150 words. Use plain language — no bullet points, no headers. Reference the specific Canadian regulation, AIM section, or principle where relevant. Speak directly to the student.`;
+Briefly reinforce why ${correctAnswer} is correct. Keep it under 120 words. Plain language, no bullet points, no headers. Reference the specific Canadian regulation, AIM section, or principle where relevant.`
+
+    : `You are an experienced Canadian IFR flight instructor. A student just answered a practice question INCORRECTLY.
+
+Question: ${question}
+
+Answer choices:
+${answerList}
+
+The student chose: ${selectedAnswer || 'unknown'} — this is WRONG.
+The correct answer is: ${correctAnswer}
+${explanation ? `Reference note: ${explanation}` : ''}
+
+IMPORTANT: Do NOT say the student answered correctly. Do NOT use phrases like "you got it right", "correct", "well done", or any praise. The student got this wrong.
+
+Explain clearly why ${correctAnswer} is the correct answer${selectedAnswer ? `, and briefly explain why "${selectedAnswer}" is incorrect` : ''}. Keep it under 150 words. Plain language, no bullet points, no headers. Reference the specific Canadian regulation, AIM section, or principle where relevant.`;
 
   try {
     const message = await anthropic.messages.create({
