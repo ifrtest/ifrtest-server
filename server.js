@@ -665,10 +665,21 @@ app.get('/admin/students/:email/quizzes', async (req, res) => {
 // ─── POST /admin/set-access ───────────────────────────────────────────────────
 app.post('/admin/set-access', async (req, res) => {
   const ADMIN_SECRET = process.env.ADMIN_SECRET || 'ifrtest-admin-2024';
-  const { secret, email, granted } = req.body;
+  const { secret, email, granted, grant } = req.body;
   if (secret !== ADMIN_SECRET) return res.status(403).json({ error: 'Forbidden' });
+  const grantAccess = granted !== undefined ? granted : grant;
   try {
-    await dbSetAccess(email, granted);
+    // Upsert so granting works even if the student doesn't exist yet
+    if (grantAccess) {
+      await db.query(
+        `INSERT INTO students (email, plan, access_granted)
+         VALUES ($1, 'pro', true)
+         ON CONFLICT (email) DO UPDATE SET access_granted = true, updated_at = NOW()`,
+        [email.toLowerCase()]
+      );
+    } else {
+      await dbSetAccess(email, false);
+    }
     res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
