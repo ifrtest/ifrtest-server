@@ -985,68 +985,146 @@ app.post('/webhook', express.raw({ type: 'application/json' }), (req, res) => {
   res.json({ received: true });
 });
 
-// ─── Lead capture: cheat sheet ────────────────────────────────────────────────
+// ─── Lead capture: cheat sheet (double opt-in) ────────────────────────────────
+function cheatsheetEmail(token) {
+  const verifyUrl = `${FRONTEND_URL}/verify-lead.html?token=${token}`;
+  return `
+  <div style="background:#05080f;color:#e8edf5;font-family:Arial,sans-serif;max-width:580px;margin:0 auto;border-radius:8px;overflow:hidden;">
+    <div style="background:#05080f;padding:18px 40px;border-bottom:1px solid rgba(0,212,160,0.15);">
+      <img src="https://ifrtest.ca/images/ifr_logo.png" alt="IFRTEST.ca" style="height:36px;display:block;">
+    </div>
+    <img src="https://ifrtest.ca/images/email-hero.jpg" alt="Cockpit" style="width:100%;display:block;max-height:200px;object-fit:cover;object-position:center 40%;">
+    <div style="padding:36px 40px;">
+      <p style="margin:0 0 20px;color:rgba(200,210,230,0.5);font-size:13px;">IFRTEST.ca — Canadian IFR Exam Prep</p>
+      <h1 style="color:#e8edf5;font-size:22px;margin:0 0 16px;font-weight:700;">One quick step — confirm your email</h1>
+      <p style="color:rgba(200,210,230,0.72);line-height:1.75;font-size:15px;margin:0 0 28px;">
+        Click the button below to confirm your email. Your free Canadian IFR Cheat Sheet will be sent immediately after.
+      </p>
+      <div style="margin:0 0 28px;">
+        <a href="${verifyUrl}" style="background:#00d4a0;color:#05080f;text-decoration:none;padding:14px 28px;border-radius:6px;font-weight:700;font-size:15px;display:inline-block;">Confirm Email & Get Cheat Sheet →</a>
+      </div>
+      <div style="border-top:1px solid rgba(255,255,255,0.06);padding-top:20px;">
+        <p style="color:rgba(200,210,230,0.35);font-size:12px;line-height:1.8;margin:0;">
+          If you didn't request this, just ignore this email.<br>
+          Questions? Reply to this email — we read every one.
+        </p>
+      </div>
+    </div>
+  </div>`;
+}
+
+function cheatsheetDeliveryEmail() {
+  return `
+  <div style="background:#05080f;color:#e8edf5;font-family:Arial,sans-serif;max-width:580px;margin:0 auto;border-radius:8px;overflow:hidden;">
+    <div style="background:#05080f;padding:18px 40px;border-bottom:1px solid rgba(0,212,160,0.15);">
+      <img src="https://ifrtest.ca/images/ifr_logo.png" alt="IFRTEST.ca" style="height:36px;display:block;">
+    </div>
+    <img src="https://ifrtest.ca/images/email-hero.jpg" alt="Cockpit" style="width:100%;display:block;max-height:200px;object-fit:cover;object-position:center 40%;">
+    <div style="padding:36px 40px;">
+      <p style="margin:0 0 20px;color:rgba(200,210,230,0.5);font-size:13px;">IFRTEST.ca — Canadian IFR Exam Prep</p>
+      <h1 style="color:#e8edf5;font-size:22px;margin:0 0 16px;font-weight:700;">Your Canadian IFR Cheat Sheet</h1>
+      <p style="color:rgba(200,210,230,0.72);line-height:1.75;font-size:15px;margin:0 0 28px;">
+        Here's your quick-reference guide for the INRAT — airspace, nav aids, GPS, alternates, fuel, icing, approaches, and more. All values are Canadian-specific (CARS, not FAR).
+      </p>
+      <div style="margin:0 0 36px;">
+        <a href="https://ifrtest.ca/cheat-sheet.html" style="background:#00d4a0;color:#05080f;text-decoration:none;padding:14px 28px;border-radius:6px;font-weight:700;font-size:15px;display:inline-block;">Open Your Cheat Sheet →</a>
+      </div>
+      <div style="background:rgba(0,212,160,0.08);border-left:3px solid #00d4a0;padding:14px 18px;margin:0 0 28px;border-radius:0 6px 6px 0;">
+        <p style="margin:0;color:#e8edf5;font-size:14px;font-weight:600;">Want all 513 INRAT questions?</p>
+        <p style="margin:6px 0 0;color:rgba(200,210,230,0.6);font-size:13px;line-height:1.6;">Get Pro access for $14.99/mo — timed simulator, AI Instructor, flashcards, and full explanations on every question.</p>
+        <a href="https://ifrtest.ca/#pricing" style="display:inline-block;margin-top:10px;color:#00d4a0;font-size:13px;font-weight:600;text-decoration:none;">See pricing →</a>
+      </div>
+      <div style="border-top:1px solid rgba(255,255,255,0.06);padding-top:20px;">
+        <p style="color:rgba(200,210,230,0.35);font-size:12px;line-height:1.8;margin:0;">
+          Questions? Just reply to this email — we read every one.<br>Good luck on the exam.
+        </p>
+      </div>
+    </div>
+  </div>`;
+}
+
 app.post('/lead/cheatsheet', async (req, res) => {
   const { email } = req.body;
   if (!email || !email.includes('@')) return res.status(400).json({ error: 'Valid email required.' });
   const em = email.toLowerCase().trim();
+  const token = crypto.randomBytes(24).toString('hex');
 
-  // Save to leads table (create if not exists)
+  // Ensure leads table exists with verify columns
   try {
     await db.query(`CREATE TABLE IF NOT EXISTS leads (
       email TEXT PRIMARY KEY,
       source TEXT,
+      verified BOOLEAN DEFAULT FALSE,
+      verify_token TEXT,
       created_at TIMESTAMPTZ DEFAULT NOW()
     )`);
+    // Add columns if table existed without them
+    await db.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS verified BOOLEAN DEFAULT FALSE`);
+    await db.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS verify_token TEXT`);
     await db.query(
-      `INSERT INTO leads (email, source, created_at) VALUES ($1, 'cheatsheet', NOW())
-       ON CONFLICT (email) DO UPDATE SET source = EXCLUDED.source, created_at = NOW()`,
-      [em]
+      `INSERT INTO leads (email, source, verified, verify_token, created_at)
+       VALUES ($1, 'cheatsheet', FALSE, $2, NOW())
+       ON CONFLICT (email) DO UPDATE SET verify_token = $2, created_at = NOW()`,
+      [em, token]
     );
   } catch (e) {
     console.error('Lead save error:', e.message);
+    return res.status(500).json({ error: 'Could not save.' });
   }
 
-  // Send cheat sheet email
+  // Send verification email
   try {
     await resend.emails.send({
       from: 'IFRTEST.ca <noreply@ifrtest.ca>',
       to: em,
       reply_to: 'ifrtest.ca@gmail.com',
-      subject: 'Your Canadian IFR Cheat Sheet',
-      html: `
-      <div style="background:#05080f;color:#e8edf5;font-family:Arial,sans-serif;max-width:580px;margin:0 auto;border-radius:8px;overflow:hidden;">
-        <div style="background:#05080f;padding:18px 40px;border-bottom:1px solid rgba(0,212,160,0.15);">
-          <img src="https://ifrtest.ca/images/ifr_logo.png" alt="IFRTEST.ca" style="height:36px;display:block;">
-        </div>
-        <img src="https://ifrtest.ca/images/email-hero.jpg" alt="Cockpit" style="width:100%;display:block;max-height:200px;object-fit:cover;object-position:center 40%;">
-        <div style="padding:36px 40px;">
-          <p style="margin:0 0 20px;color:rgba(200,210,230,0.5);font-size:13px;">IFRTEST.ca — Canadian IFR Exam Prep</p>
-          <h1 style="color:#e8edf5;font-size:22px;margin:0 0 16px;font-weight:700;">Your Canadian IFR Cheat Sheet</h1>
-          <p style="color:rgba(200,210,230,0.72);line-height:1.75;font-size:15px;margin:0 0 28px;">
-            Here's your quick-reference guide for the INRAT — airspace, nav aids, GPS, alternates, fuel, icing, approaches, and more. All values are Canadian-specific (CARS, not FAR).
-          </p>
-          <div style="margin:0 0 36px;">
-            <a href="https://ifrtest.ca/cheat-sheet.html" style="background:#00d4a0;color:#05080f;text-decoration:none;padding:14px 28px;border-radius:6px;font-weight:700;font-size:15px;display:inline-block;">Open Your Cheat Sheet →</a>
-          </div>
-          <div style="background:rgba(0,212,160,0.08);border-left:3px solid #00d4a0;padding:14px 18px;margin:0 0 28px;border-radius:0 6px 6px 0;">
-            <p style="margin:0;color:#e8edf5;font-size:14px;font-weight:600;">Want all 513 INRAT questions?</p>
-            <p style="margin:6px 0 0;color:rgba(200,210,230,0.6);font-size:13px;line-height:1.6;">Get Pro access for $14.99/mo — timed simulator, AI Instructor, flashcards, and full explanations on every question.</p>
-            <a href="https://ifrtest.ca/#pricing" style="display:inline-block;margin-top:10px;color:#00d4a0;font-size:13px;font-weight:600;text-decoration:none;">See pricing →</a>
-          </div>
-          <div style="border-top:1px solid rgba(255,255,255,0.06);padding-top:20px;">
-            <p style="color:rgba(200,210,230,0.35);font-size:12px;line-height:1.8;margin:0;">
-              Questions? Just reply to this email — we read every one.<br>Good luck on the exam.
-            </p>
-          </div>
-        </div>
-      </div>`
+      subject: 'Confirm your email — IFR Cheat Sheet',
+      html: cheatsheetEmail(token)
     });
   } catch (e) {
-    console.error('Cheatsheet email error:', e.message);
+    console.error('Verify email error:', e.message);
   }
 
   res.json({ ok: true });
+});
+
+// ─── Lead verify: confirms email, sends cheat sheet ───────────────────────────
+app.get('/lead/verify', async (req, res) => {
+  const { token } = req.query;
+  if (!token) return res.status(400).send('Invalid link.');
+
+  let email;
+  try {
+    const { rows } = await db.query(
+      `UPDATE leads SET verified = TRUE, verify_token = NULL
+       WHERE verify_token = $1 AND verified = FALSE
+       RETURNING email`,
+      [token]
+    );
+    if (!rows.length) {
+      // Already verified or invalid — redirect to cheat sheet anyway
+      return res.redirect(`${FRONTEND_URL}/verify-lead.html?status=already`);
+    }
+    email = rows[0].email;
+  } catch (e) {
+    console.error('Lead verify error:', e.message);
+    return res.status(500).send('Server error.');
+  }
+
+  // Send the actual cheat sheet
+  try {
+    await resend.emails.send({
+      from: 'IFRTEST.ca <noreply@ifrtest.ca>',
+      to: email,
+      reply_to: 'ifrtest.ca@gmail.com',
+      subject: 'Your Canadian IFR Cheat Sheet',
+      html: cheatsheetDeliveryEmail()
+    });
+  } catch (e) {
+    console.error('Cheatsheet delivery error:', e.message);
+  }
+
+  res.redirect(`${FRONTEND_URL}/verify-lead.html?status=verified`);
 });
 
 // ─── Start server ─────────────────────────────────────────────────────────────
