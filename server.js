@@ -669,14 +669,14 @@ app.post('/admin/set-access', async (req, res) => {
   if (secret !== ADMIN_SECRET) return res.status(403).json({ error: 'Forbidden' });
   const grantAccess = granted !== undefined ? granted : grant;
   try {
-    // Upsert so granting works even if the student doesn't exist yet
+    const lc = email.toLowerCase();
     if (grantAccess) {
-      await db.query(
-        `INSERT INTO students (email, plan, access_granted)
-         VALUES ($1, 'pro', true)
-         ON CONFLICT (email) DO UPDATE SET access_granted = true, updated_at = NOW()`,
-        [email.toLowerCase()]
-      );
+      const { rows } = await db.query(`SELECT id FROM students WHERE email = $1 LIMIT 1`, [lc]);
+      if (rows.length > 0) {
+        await db.query(`UPDATE students SET access_granted = true, updated_at = NOW() WHERE email = $1`, [lc]);
+      } else {
+        await db.query(`INSERT INTO students (email, plan, access_granted) VALUES ($1, 'pro', true)`, [lc]);
+      }
     } else {
       await dbSetAccess(email, false);
     }
