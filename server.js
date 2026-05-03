@@ -609,7 +609,7 @@ async function sendWelcomeEmail(to, plan, isNewUser = true) {
         </div>
 
         <!-- Header image -->
-        <img src="https://ifrtest.ca/images/cockpit.jpg" alt="Cockpit" style="width:100%;display:block;max-height:220px;object-fit:cover;object-position:center 30%;">
+        <img src="https://ifrtest.ca/images/email-hero.jpg" alt="Cockpit" style="width:100%;display:block;max-height:220px;object-fit:cover;object-position:center 40%;">
 
         <div style="padding:36px 40px;">
 
