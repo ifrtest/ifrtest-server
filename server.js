@@ -985,6 +985,70 @@ app.post('/webhook', express.raw({ type: 'application/json' }), (req, res) => {
   res.json({ received: true });
 });
 
+// ─── Lead capture: cheat sheet ────────────────────────────────────────────────
+app.post('/lead/cheatsheet', async (req, res) => {
+  const { email } = req.body;
+  if (!email || !email.includes('@')) return res.status(400).json({ error: 'Valid email required.' });
+  const em = email.toLowerCase().trim();
+
+  // Save to leads table (create if not exists)
+  try {
+    await db.query(`CREATE TABLE IF NOT EXISTS leads (
+      email TEXT PRIMARY KEY,
+      source TEXT,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    )`);
+    await db.query(
+      `INSERT INTO leads (email, source, created_at) VALUES ($1, 'cheatsheet', NOW())
+       ON CONFLICT (email) DO UPDATE SET source = EXCLUDED.source, created_at = NOW()`,
+      [em]
+    );
+  } catch (e) {
+    console.error('Lead save error:', e.message);
+  }
+
+  // Send cheat sheet email
+  try {
+    await resend.emails.send({
+      from: 'IFRTEST.ca <noreply@ifrtest.ca>',
+      to: em,
+      reply_to: 'ifrtest.ca@gmail.com',
+      subject: 'Your Canadian IFR Cheat Sheet',
+      html: `
+      <div style="background:#05080f;color:#e8edf5;font-family:Arial,sans-serif;max-width:580px;margin:0 auto;border-radius:8px;overflow:hidden;">
+        <div style="background:#05080f;padding:18px 40px;border-bottom:1px solid rgba(0,212,160,0.15);">
+          <img src="https://ifrtest.ca/images/ifr_logo.png" alt="IFRTEST.ca" style="height:36px;display:block;">
+        </div>
+        <img src="https://ifrtest.ca/images/email-hero.jpg" alt="Cockpit" style="width:100%;display:block;max-height:200px;object-fit:cover;object-position:center 40%;">
+        <div style="padding:36px 40px;">
+          <p style="margin:0 0 20px;color:rgba(200,210,230,0.5);font-size:13px;">IFRTEST.ca — Canadian IFR Exam Prep</p>
+          <h1 style="color:#e8edf5;font-size:22px;margin:0 0 16px;font-weight:700;">Your Canadian IFR Cheat Sheet</h1>
+          <p style="color:rgba(200,210,230,0.72);line-height:1.75;font-size:15px;margin:0 0 28px;">
+            Here's your quick-reference guide for the INRAT — airspace, nav aids, GPS, alternates, fuel, icing, approaches, and more. All values are Canadian-specific (CARS, not FAR).
+          </p>
+          <div style="margin:0 0 36px;">
+            <a href="https://ifrtest.ca/cheat-sheet.html" style="background:#00d4a0;color:#05080f;text-decoration:none;padding:14px 28px;border-radius:6px;font-weight:700;font-size:15px;display:inline-block;">Open Your Cheat Sheet →</a>
+          </div>
+          <div style="background:rgba(0,212,160,0.08);border-left:3px solid #00d4a0;padding:14px 18px;margin:0 0 28px;border-radius:0 6px 6px 0;">
+            <p style="margin:0;color:#e8edf5;font-size:14px;font-weight:600;">Want all 513 INRAT questions?</p>
+            <p style="margin:6px 0 0;color:rgba(200,210,230,0.6);font-size:13px;line-height:1.6;">Get Pro access for $14.99/mo — timed simulator, AI Instructor, flashcards, and full explanations on every question.</p>
+            <a href="https://ifrtest.ca/#pricing" style="display:inline-block;margin-top:10px;color:#00d4a0;font-size:13px;font-weight:600;text-decoration:none;">See pricing →</a>
+          </div>
+          <div style="border-top:1px solid rgba(255,255,255,0.06);padding-top:20px;">
+            <p style="color:rgba(200,210,230,0.35);font-size:12px;line-height:1.8;margin:0;">
+              Questions? Just reply to this email — we read every one.<br>Good luck on the exam.
+            </p>
+          </div>
+        </div>
+      </div>`
+    });
+  } catch (e) {
+    console.error('Cheatsheet email error:', e.message);
+  }
+
+  res.json({ ok: true });
+});
+
 // ─── Start server ─────────────────────────────────────────────────────────────
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => {
