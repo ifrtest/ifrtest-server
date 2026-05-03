@@ -528,6 +528,40 @@ app.post('/quiz-result', async (req, res) => {
   res.json({ ok: true });
 });
 
+// ─── POST /admin/backfill ─────────────────────────────────────────────────────
+// One-time: pulls all paid Stripe customers into the database.
+app.post('/admin/backfill', async (req, res) => {
+  const ADMIN_SECRET = process.env.ADMIN_SECRET || 'ifrtest-admin-2024';
+  if (req.body.secret !== ADMIN_SECRET) return res.status(403).json({ error: 'Forbidden' });
+  try {
+    const customers = await stripe.customers.list({ limit: 100 });
+    let imported = 0;
+    for (const customer of customers.data) {
+      const sessions = await stripe.checkout.sessions.list({
+        customer: customer.id, limit: 20, expand: ['data.subscription'],
+      });
+      for (const session of sessions.data) {
+        const email = customer.email;
+        if (!email) continue;
+        let plan = null;
+        if (session.mode === 'payment' && session.payment_status === 'paid') plan = 'lifetime';
+        else if (session.mode === 'subscription' && session.subscription) {
+          const sub = session.subscription;
+          if (['active', 'trialing', 'past_due', 'canceled'].includes(sub.status)) plan = 'monthly';
+        }
+        if (plan) {
+          await dbSaveStudent({ email, sessionId: session.id, customerId: customer.id, plan });
+          imported++;
+          break;
+        }
+      }
+    }
+    res.json({ ok: true, imported });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ─── POST /admin/resend-welcome ───────────────────────────────────────────────
 // Manual resend for cases where webhook email failed (e.g. DNS not yet verified).
 // Body: { secret: '...', email: '...', plan: 'monthly' | 'lifetime' }
