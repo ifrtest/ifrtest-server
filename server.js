@@ -10,9 +10,66 @@ const cors       = require('cors');
 const stripe     = require('stripe')(process.env.STRIPE_SECRET_KEY);
 const { Resend } = require('resend');
 const Anthropic  = require('@anthropic-ai/sdk');
+const { Pool }   = require('pg');
 
 const resend    = new Resend(process.env.RESEND_API_KEY);
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+
+// ─── Database ─────────────────────────────────────────────────────────────────
+const db = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: { rejectUnauthorized: false },
+});
+
+async function dbSaveStudent({ email, sessionId, customerId, plan }) {
+  try {
+    await db.query(
+      `INSERT INTO students (email, stripe_session_id, stripe_customer_id, plan, access_granted)
+       VALUES ($1, $2, $3, $4, true)
+       ON CONFLICT (stripe_session_id) DO UPDATE
+       SET email = $1, stripe_customer_id = $3, plan = $4, updated_at = NOW()`,
+      [email, sessionId, customerId || null, plan]
+    );
+  } catch (err) {
+    console.error('[db] saveStudent failed:', err.message);
+  }
+}
+
+async function dbGetStudent(email) {
+  try {
+    const { rows } = await db.query(
+      `SELECT * FROM students WHERE email = $1 ORDER BY created_at DESC LIMIT 1`,
+      [email]
+    );
+    return rows[0] || null;
+  } catch (err) {
+    console.error('[db] getStudent failed:', err.message);
+    return null;
+  }
+}
+
+async function dbSetAccess(email, granted) {
+  try {
+    await db.query(
+      `UPDATE students SET access_granted = $1, updated_at = NOW() WHERE email = $2`,
+      [granted, email]
+    );
+  } catch (err) {
+    console.error('[db] setAccess failed:', err.message);
+  }
+}
+
+async function dbSaveQuizSession({ email, score, correctCount, totalQuestions, passed, mode }) {
+  try {
+    await db.query(
+      `INSERT INTO quiz_sessions (student_email, score, correct_count, total_questions, passed, mode)
+       VALUES ($1, $2, $3, $4, $5, $6)`,
+      [email, score, correctCount, totalQuestions, passed, mode || 'practice']
+    );
+  } catch (err) {
+    console.error('[db] saveQuizSession failed:', err.message);
+  }
+}
 
 const app = express();
 
@@ -398,81 +455,77 @@ async function sendWelcomeEmail(to, plan) {
   console.log('[email] Welcome email sent to', to);
 }
 
-// ─── GET /admin/customers ─────────────────────────────────────────────────────
-// Returns all Stripe customers with their subscription/payment status.
-// Query param: ?secret=...
-app.get('/admin/customers', async (req, res) => {
+// ─── GET /admin/students ──────────────────────────────────────────────────────
+app.get('/admin/students', async (req, res) => {
   const ADMIN_SECRET = process.env.ADMIN_SECRET || 'ifrtest-admin-2024';
-  if (req.query.secret !== ADMIN_SECRET) {
-    return res.status(403).json({ error: 'Forbidden' });
-  }
-
+  if (req.query.secret !== ADMIN_SECRET) return res.status(403).json({ error: 'Forbidden' });
   try {
-    const customers = await stripe.customers.list({ limit: 100 });
-    const results = [];
-
-    for (const customer of customers.data) {
-      const sessions = await stripe.checkout.sessions.list({
-        customer: customer.id,
-        limit: 10,
-        expand: ['data.subscription'],
-      });
-
-      let plan = null;
-      let status = 'no_purchase';
-      let sessionId = null;
-      let amount = null;
-      let date = null;
-
-      for (const session of sessions.data) {
-        if (session.mode === 'payment' && session.payment_status === 'paid') {
-          plan = 'lifetime';
-          status = 'active';
-          sessionId = session.id;
-          amount = session.amount_total;
-          date = session.created;
-          break;
-        }
-        if (session.mode === 'subscription' && session.subscription) {
-          const sub = session.subscription;
-          if (['active', 'trialing', 'past_due'].includes(sub.status)) {
-            plan = 'monthly';
-            status = sub.status;
-            sessionId = session.id;
-            amount = session.amount_total;
-            date = session.created;
-            break;
-          } else if (sub.status === 'canceled') {
-            plan = 'monthly';
-            status = 'canceled';
-            sessionId = session.id;
-            amount = session.amount_total;
-            date = session.created;
-          }
-        }
-      }
-
-      if (sessions.data.length > 0) {
-        results.push({
-          id: customer.id,
-          email: customer.email,
-          name: customer.name,
-          plan,
-          status,
-          sessionId,
-          amount,
-          date,
-          created: customer.created,
-        });
-      }
-    }
-
-    results.sort((a, b) => b.created - a.created);
-    res.json({ customers: results, total: results.length });
+    const { rows } = await db.query(`
+      SELECT s.*,
+        COUNT(q.id)::int AS quiz_count,
+        ROUND(AVG(q.score)::numeric, 1) AS avg_score,
+        MAX(q.created_at) AS last_quiz
+      FROM students s
+      LEFT JOIN quiz_sessions q ON q.student_email = s.email
+      GROUP BY s.id
+      ORDER BY s.created_at DESC
+    `);
+    res.json({ students: rows, total: rows.length });
   } catch (err) {
-    console.error('[admin/customers]', err.message);
+    console.error('[admin/students]', err.message);
     res.status(500).json({ error: err.message });
   }
+});
+
+// ─── GET /admin/students/:email/quizzes ───────────────────────────────────────
+app.get('/admin/students/:email/quizzes', async (req, res) => {
+  const ADMIN_SECRET = process.env.ADMIN_SECRET || 'ifrtest-admin-2024';
+  if (req.query.secret !== ADMIN_SECRET) return res.status(403).json({ error: 'Forbidden' });
+  try {
+    const { rows } = await db.query(
+      `SELECT * FROM quiz_sessions WHERE student_email = $1 ORDER BY created_at DESC`,
+      [decodeURIComponent(req.params.email)]
+    );
+    res.json({ quizzes: rows });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── POST /admin/set-access ───────────────────────────────────────────────────
+app.post('/admin/set-access', async (req, res) => {
+  const ADMIN_SECRET = process.env.ADMIN_SECRET || 'ifrtest-admin-2024';
+  const { secret, email, granted } = req.body;
+  if (secret !== ADMIN_SECRET) return res.status(403).json({ error: 'Forbidden' });
+  try {
+    await dbSetAccess(email, granted);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── POST /quiz-result ────────────────────────────────────────────────────────
+// Called by the quiz after each session to save results.
+// Body: { sessionId, score, correctCount, totalQuestions, passed, mode }
+app.post('/quiz-result', async (req, res) => {
+  const { sessionId, score, correctCount, totalQuestions, passed, mode } = req.body;
+  if (!sessionId || score === undefined || !totalQuestions) {
+    return res.json({ ok: true });
+  }
+  try {
+    const { rows } = await db.query(
+      `SELECT email FROM students WHERE stripe_session_id = $1 LIMIT 1`,
+      [sessionId]
+    );
+    const email = rows[0]?.email;
+    if (email) {
+      await dbSaveQuizSession({ email, score, correctCount, totalQuestions, passed, mode });
+    }
+  } catch (err) {
+    console.error('[quiz-result]', err.message);
+  }
+  res.json({ ok: true });
 });
 
 // ─── POST /admin/resend-welcome ───────────────────────────────────────────────
@@ -523,6 +576,12 @@ app.post('/webhook', express.raw({ type: 'application/json' }), (req, res) => {
       const plan = session.mode === 'subscription' ? 'monthly' : 'lifetime';
       console.log('[webhook] Payment complete:', session.id, customerEmail, plan);
       if (customerEmail) {
+        dbSaveStudent({
+          email: customerEmail,
+          sessionId: session.id,
+          customerId: session.customer,
+          plan,
+        }).then(() => console.log('[webhook] Student saved to DB'));
         sendWelcomeEmail(customerEmail, plan)
           .then(() => console.log('[webhook] Welcome email dispatched OK'))
           .catch(err => console.error('[webhook] Welcome email FAILED:', err.message, err.statusCode || ''));
