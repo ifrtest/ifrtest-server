@@ -605,7 +605,7 @@ async function sendWelcomeEmail(to, plan) {
         </div>
         <h2 style="color:#e8edf5;font-size:22px;">Welcome to ${planLabel}! ✈️</h2>
         <p style="color:rgba(200,210,230,0.75);line-height:1.7;">
-          Your payment was successful and your Pro access is now active. You have full access to all 382 IFR written exam questions, the timed exam simulator, flashcards, and all study tools.
+          Your payment was successful and your Pro access is now active. You have full access to all 513 IFR written exam questions, the timed exam simulator, flashcards, and all study tools.
         </p>
         <div style="background:rgba(0,212,160,0.08);border:1px solid rgba(0,212,160,0.25);border-radius:6px;padding:16px 20px;margin:24px 0;">
           <p style="margin:0;color:#00d4a0;font-weight:bold;">Plan: ${planLabel}</p>
@@ -767,6 +767,108 @@ app.post('/admin/resend-welcome', async (req, res) => {
   } catch (err) {
     console.error('[admin/resend-welcome]', err.message);
     res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── GET /checkout/config ─────────────────────────────────────────────────────
+app.get('/checkout/config', (req, res) => {
+  res.json({ publishableKey: process.env.STRIPE_PUBLISHABLE_KEY || '' });
+});
+
+// ─── POST /checkout/create-intent ────────────────────────────────────────────
+// Body: { plan: 'monthly'|'lifetime', email: string }
+// Returns: { clientSecret, type, subscriptionId? }
+app.post('/checkout/create-intent', async (req, res) => {
+  const { plan, email } = req.body;
+  if (!plan || !email || !email.includes('@')) {
+    return res.status(400).json({ error: 'plan and email required' });
+  }
+  if (plan !== 'monthly' && plan !== 'lifetime') {
+    return res.status(400).json({ error: 'Invalid plan' });
+  }
+  try {
+    const lc = email.toLowerCase().trim();
+
+    // Find or create Stripe customer
+    const existing = await stripe.customers.list({ email: lc, limit: 1 });
+    let customer = existing.data[0];
+    if (!customer) {
+      customer = await stripe.customers.create({ email: lc, metadata: { source: 'ifrtest_embedded' } });
+    }
+
+    if (plan === 'monthly') {
+      // Prevent double billing — check for existing active subscription
+      const subs = await stripe.subscriptions.list({ customer: customer.id, status: 'active', limit: 1 });
+      if (subs.data.length > 0) {
+        return res.status(409).json({ error: 'already_subscribed' });
+      }
+      const subscription = await stripe.subscriptions.create({
+        customer: customer.id,
+        items: [{ price: process.env.STRIPE_MONTHLY_PRICE_ID }],
+        payment_behavior: 'default_incomplete',
+        payment_settings: { save_default_payment_method: 'on_subscription' },
+        expand: ['latest_invoice.payment_intent'],
+      });
+      const pi = subscription.latest_invoice.payment_intent;
+      return res.json({ clientSecret: pi.client_secret, subscriptionId: subscription.id, type: 'subscription' });
+    }
+
+    // Lifetime one-time payment
+    const pi = await stripe.paymentIntents.create({
+      amount: 7900,
+      currency: 'cad',
+      customer: customer.id,
+      metadata: { plan: 'lifetime', email: lc },
+      automatic_payment_methods: { enabled: true },
+    });
+    res.json({ clientSecret: pi.client_secret, type: 'payment' });
+  } catch (err) {
+    console.error('[checkout/create-intent]', err.message);
+    res.status(500).json({ error: 'Could not create payment intent.' });
+  }
+});
+
+// ─── POST /checkout/activate ──────────────────────────────────────────────────
+// Called after Stripe confirms payment client-side.
+// Body: { email, plan, paymentIntentId?, subscriptionId? }
+// Returns: { ok, token, email, isNewUser, plan }
+app.post('/checkout/activate', async (req, res) => {
+  const { email, plan, paymentIntentId, subscriptionId } = req.body;
+  if (!email || !plan) return res.status(400).json({ error: 'email and plan required' });
+
+  try {
+    const lc = email.toLowerCase().trim();
+
+    // Verify payment actually went through before granting access
+    if (plan === 'lifetime' && paymentIntentId) {
+      const pi = await stripe.paymentIntents.retrieve(paymentIntentId);
+      if (pi.status !== 'succeeded') return res.status(402).json({ error: 'Payment not confirmed' });
+    } else if (plan === 'monthly' && subscriptionId) {
+      const sub = await stripe.subscriptions.retrieve(subscriptionId);
+      if (!['active', 'trialing', 'past_due'].includes(sub.status)) {
+        return res.status(402).json({ error: 'Subscription not active' });
+      }
+    }
+
+    // Grant DB access
+    const { rows } = await db.query(`SELECT id, password_hash FROM students WHERE email = $1 LIMIT 1`, [lc]);
+    let isNewUser = true;
+    if (rows.length > 0) {
+      isNewUser = !rows[0].password_hash;
+      await db.query(`UPDATE students SET access_granted = true, plan = $1, updated_at = NOW() WHERE email = $2`, [plan, lc]);
+    } else {
+      await db.query(`INSERT INTO students (email, plan, access_granted) VALUES ($1, $2, true)`, [lc, plan]);
+    }
+
+    const token = signToken(lc);
+
+    // Send welcome email non-blocking
+    sendWelcomeEmail(lc, plan).catch(e => console.error('[checkout/activate] email:', e.message));
+
+    res.json({ ok: true, token, email: lc, isNewUser, plan });
+  } catch (err) {
+    console.error('[checkout/activate]', err.message);
+    res.status(500).json({ error: 'Could not activate account.' });
   }
 });
 
