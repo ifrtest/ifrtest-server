@@ -398,6 +398,83 @@ async function sendWelcomeEmail(to, plan) {
   console.log('[email] Welcome email sent to', to);
 }
 
+// ─── GET /admin/customers ─────────────────────────────────────────────────────
+// Returns all Stripe customers with their subscription/payment status.
+// Query param: ?secret=...
+app.get('/admin/customers', async (req, res) => {
+  const ADMIN_SECRET = process.env.ADMIN_SECRET || 'ifrtest-admin-2024';
+  if (req.query.secret !== ADMIN_SECRET) {
+    return res.status(403).json({ error: 'Forbidden' });
+  }
+
+  try {
+    const customers = await stripe.customers.list({ limit: 100 });
+    const results = [];
+
+    for (const customer of customers.data) {
+      const sessions = await stripe.checkout.sessions.list({
+        customer: customer.id,
+        limit: 10,
+        expand: ['data.subscription'],
+      });
+
+      let plan = null;
+      let status = 'no_purchase';
+      let sessionId = null;
+      let amount = null;
+      let date = null;
+
+      for (const session of sessions.data) {
+        if (session.mode === 'payment' && session.payment_status === 'paid') {
+          plan = 'lifetime';
+          status = 'active';
+          sessionId = session.id;
+          amount = session.amount_total;
+          date = session.created;
+          break;
+        }
+        if (session.mode === 'subscription' && session.subscription) {
+          const sub = session.subscription;
+          if (['active', 'trialing', 'past_due'].includes(sub.status)) {
+            plan = 'monthly';
+            status = sub.status;
+            sessionId = session.id;
+            amount = session.amount_total;
+            date = session.created;
+            break;
+          } else if (sub.status === 'canceled') {
+            plan = 'monthly';
+            status = 'canceled';
+            sessionId = session.id;
+            amount = session.amount_total;
+            date = session.created;
+          }
+        }
+      }
+
+      if (sessions.data.length > 0) {
+        results.push({
+          id: customer.id,
+          email: customer.email,
+          name: customer.name,
+          plan,
+          status,
+          sessionId,
+          amount,
+          date,
+          created: customer.created,
+        });
+      }
+    }
+
+    results.sort((a, b) => b.created - a.created);
+    res.json({ customers: results, total: results.length });
+  } catch (err) {
+    console.error('[admin/customers]', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ─── POST /admin/resend-welcome ───────────────────────────────────────────────
 // Manual resend for cases where webhook email failed (e.g. DNS not yet verified).
 // Body: { secret: '...', email: '...', plan: 'monthly' | 'lifetime' }
