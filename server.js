@@ -598,6 +598,7 @@ async function sendWelcomeEmail(to, plan, isNewUser = true) {
 
   await resend.emails.send({
     from: 'IFRTEST.ca <noreply@ifrtest.ca>',
+    reply_to: 'ifrtest.ca@gmail.com',
     to,
     subject: `You're in — IFRTEST Pro is ready`,
     html: `
