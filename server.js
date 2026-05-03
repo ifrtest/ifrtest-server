@@ -581,44 +581,101 @@ app.post('/verify-email', async (req, res) => {
 });
 
 // ─── Email helpers ────────────────────────────────────────────────────────────
-async function sendWelcomeEmail(to, plan) {
+async function sendWelcomeEmail(to, plan, isNewUser = true) {
   if (!process.env.RESEND_API_KEY) {
     console.error('[email] RESEND_API_KEY is not set — skipping welcome email');
     return;
   }
 
   const isLifetime = plan === 'lifetime';
-  const planLabel  = isLifetime ? 'Pro Lifetime' : 'Pro Monthly';
-  const planDetail = isLifetime
-    ? 'You have lifetime access — you will never be charged again.'
-    : 'Your subscription renews monthly. You can cancel anytime by emailing ifrtest.ca@gmail.com.';
+  const ctaUrl  = isNewUser
+    ? `https://ifrtest.ca/set-password.html?email=${encodeURIComponent(to)}`
+    : 'https://ifrtest.ca/ifrtest_quiz.html';
+  const ctaText = isNewUser ? 'Set Your Password & Start Studying →' : 'Go to Your Study Dashboard →';
+  const cancelNote = isLifetime
+    ? 'This is a one-time purchase — you will never be charged again.'
+    : 'Your subscription renews monthly. To cancel, just reply to this email and we\'ll take care of it within 24 hours.';
 
   await resend.emails.send({
     from: 'IFRTEST.ca <noreply@ifrtest.ca>',
     to,
-    subject: `Welcome to IFRTEST Pro — You're all set! ✈️`,
+    subject: `You're in — IFRTEST Pro is ready`,
     html: `
-      <div style="background:#05080f;color:#e8edf5;font-family:Arial,sans-serif;padding:40px;max-width:600px;margin:0 auto;border-radius:8px;">
-        <div style="text-align:center;margin-bottom:32px;">
-          <h1 style="color:#00d4a0;font-size:28px;margin:0;">IFRTEST.ca</h1>
-          <p style="color:rgba(200,210,230,0.5);margin:4px 0 0;">Canadian IFR Exam Prep</p>
+      <div style="background:#05080f;color:#e8edf5;font-family:Arial,sans-serif;max-width:580px;margin:0 auto;">
+
+        <!-- Logo bar -->
+        <div style="background:#05080f;padding:20px 40px;border-radius:8px 8px 0 0;border-bottom:1px solid rgba(0,212,160,0.15);">
+          <span style="font-family:Arial,sans-serif;font-size:20px;font-weight:900;color:#00d4a0;letter-spacing:3px;">IFRTEST</span><span style="font-family:Arial,sans-serif;font-size:13px;color:rgba(200,210,230,0.35);font-weight:400;">.ca</span>
         </div>
-        <h2 style="color:#e8edf5;font-size:22px;">Welcome to ${planLabel}! ✈️</h2>
-        <p style="color:rgba(200,210,230,0.75);line-height:1.7;">
-          Your payment was successful and your Pro access is now active. You have full access to all 513 IFR written exam questions, the timed exam simulator, flashcards, and all study tools.
-        </p>
-        <div style="background:rgba(0,212,160,0.08);border:1px solid rgba(0,212,160,0.25);border-radius:6px;padding:16px 20px;margin:24px 0;">
-          <p style="margin:0;color:#00d4a0;font-weight:bold;">Plan: ${planLabel}</p>
-          <p style="margin:6px 0 0;color:rgba(200,210,230,0.6);font-size:14px;">${planDetail}</p>
+
+        <!-- Header image -->
+        <img src="https://ifrtest.ca/images/cockpit.jpg" alt="Cockpit" style="width:100%;display:block;max-height:220px;object-fit:cover;object-position:center 30%;">
+
+        <div style="padding:36px 40px;">
+
+          <p style="margin:0 0 24px;color:rgba(200,210,230,0.5);font-size:13px;">IFRTEST.ca — Canadian IFR Exam Prep</p>
+
+          <h1 style="color:#e8edf5;font-size:22px;margin:0 0 16px;font-weight:700;">Your Pro access is active.</h1>
+
+          <p style="color:rgba(200,210,230,0.72);line-height:1.75;font-size:15px;margin:0 0 24px;">
+            Payment confirmed. You now have full access to 513 INRAT practice questions across all 13 exam categories, the timed exam simulator, AI Instructor, flashcards, and your readiness dashboard.
+          </p>
+
+          ${isNewUser ? `
+          <div style="background:rgba(0,212,160,0.08);border-left:3px solid #00d4a0;padding:14px 18px;margin:0 0 28px;border-radius:0 6px 6px 0;">
+            <p style="margin:0;color:#e8edf5;font-size:14px;font-weight:600;">One quick step first</p>
+            <p style="margin:6px 0 0;color:rgba(200,210,230,0.6);font-size:13px;line-height:1.6;">Set a password so you can log in from any device. Takes 30 seconds.</p>
+          </div>` : ''}
+
+          <div style="margin:0 0 36px;">
+            <a href="${ctaUrl}" style="background:#00d4a0;color:#05080f;text-decoration:none;padding:14px 28px;border-radius:6px;font-weight:700;font-size:15px;display:inline-block;">${ctaText}</a>
+          </div>
+
+          <!-- Install instructions -->
+          <div style="background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.07);border-radius:8px;padding:22px 24px;margin-bottom:28px;">
+            <p style="margin:0 0 6px;font-size:15px;font-weight:700;color:#e8edf5;">Save it to your phone — study anywhere</p>
+            <p style="margin:0 0 18px;font-size:13px;color:rgba(200,210,230,0.5);line-height:1.6;">Add IFRTEST.ca to your home screen and it opens like an app — no app store required.</p>
+            <table style="width:100%;border-collapse:collapse;">
+              <tr>
+                <td style="vertical-align:top;padding-right:16px;width:33%;">
+                  <p style="margin:0 0 8px;font-size:12px;font-weight:700;color:#00d4a0;text-transform:uppercase;letter-spacing:0.05em;">iPhone / iPad</p>
+                  <ol style="margin:0;padding-left:16px;font-size:12px;color:rgba(200,210,230,0.6);line-height:1.9;">
+                    <li>Open in <strong style="color:#e8edf5;">Safari</strong></li>
+                    <li>Tap the <strong style="color:#e8edf5;">Share</strong> button</li>
+                    <li>Tap <strong style="color:#e8edf5;">"Add to Home Screen"</strong></li>
+                    <li>Tap <strong style="color:#e8edf5;">Add</strong></li>
+                  </ol>
+                </td>
+                <td style="vertical-align:top;padding-right:16px;width:33%;">
+                  <p style="margin:0 0 8px;font-size:12px;font-weight:700;color:#00d4a0;text-transform:uppercase;letter-spacing:0.05em;">Android</p>
+                  <ol style="margin:0;padding-left:16px;font-size:12px;color:rgba(200,210,230,0.6);line-height:1.9;">
+                    <li>Open in <strong style="color:#e8edf5;">Chrome</strong></li>
+                    <li>Tap the <strong style="color:#e8edf5;">⋮</strong> menu</li>
+                    <li>Tap <strong style="color:#e8edf5;">"Add to Home Screen"</strong></li>
+                    <li>Tap <strong style="color:#e8edf5;">Add</strong></li>
+                  </ol>
+                </td>
+                <td style="vertical-align:top;width:33%;">
+                  <p style="margin:0 0 8px;font-size:12px;font-weight:700;color:#00d4a0;text-transform:uppercase;letter-spacing:0.05em;">Desktop</p>
+                  <ol style="margin:0;padding-left:16px;font-size:12px;color:rgba(200,210,230,0.6);line-height:1.9;">
+                    <li>Open in <strong style="color:#e8edf5;">Chrome or Edge</strong></li>
+                    <li>Click the <strong style="color:#e8edf5;">install icon</strong> in the address bar</li>
+                    <li>Click <strong style="color:#e8edf5;">"Install"</strong></li>
+                  </ol>
+                </td>
+              </tr>
+            </table>
+          </div>
+
+          <div style="border-top:1px solid rgba(255,255,255,0.06);padding-top:20px;">
+            <p style="color:rgba(200,210,230,0.35);font-size:12px;line-height:1.8;margin:0;">
+              ${cancelNote}<br>
+              Questions? Just reply to this email — we read every one.<br><br>
+              Good luck on the exam.
+            </p>
+          </div>
+
         </div>
-        <div style="text-align:center;margin:32px 0;">
-          <a href="https://ifrtest.ca/ifrtest_quiz.html" style="background:#00d4a0;color:#05080f;text-decoration:none;padding:14px 32px;border-radius:6px;font-weight:bold;font-size:16px;">Start Studying →</a>
-        </div>
-        <p style="color:rgba(200,210,230,0.4);font-size:13px;line-height:1.6;">
-          Questions? Reply to this email or contact us at <a href="mailto:ifrtest.ca@gmail.com" style="color:#00d4a0;">ifrtest.ca@gmail.com</a>
-        </p>
-        <hr style="border:none;border-top:1px solid rgba(0,212,160,0.1);margin:24px 0;">
-        <p style="color:rgba(200,210,230,0.25);font-size:11px;text-align:center;">IFRTEST.ca · Canadian IFR Written Exam Prep</p>
       </div>
     `,
   });
@@ -863,7 +920,7 @@ app.post('/checkout/activate', async (req, res) => {
     const token = signToken(lc);
 
     // Send welcome email non-blocking
-    sendWelcomeEmail(lc, plan).catch(e => console.error('[checkout/activate] email:', e.message));
+    sendWelcomeEmail(lc, plan, isNewUser).catch(e => console.error('[checkout/activate] email:', e.message));
 
     res.json({ ok: true, token, email: lc, isNewUser, plan });
   } catch (err) {
