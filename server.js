@@ -604,8 +604,8 @@ async function sendWelcomeEmail(to, plan, isNewUser = true) {
       <div style="background:#05080f;color:#e8edf5;font-family:Arial,sans-serif;max-width:580px;margin:0 auto;">
 
         <!-- Logo bar -->
-        <div style="background:#05080f;padding:20px 40px;border-radius:8px 8px 0 0;border-bottom:1px solid rgba(0,212,160,0.15);">
-          <span style="font-family:Arial,sans-serif;font-size:20px;font-weight:900;color:#00d4a0;letter-spacing:3px;">IFRTEST</span><span style="font-family:Arial,sans-serif;font-size:13px;color:rgba(200,210,230,0.35);font-weight:400;">.ca</span>
+        <div style="background:#05080f;padding:18px 40px;border-radius:8px 8px 0 0;border-bottom:1px solid rgba(0,212,160,0.15);">
+          <img src="https://ifrtest.ca/images/ifr_logo.png" alt="IFRTEST.ca" style="height:36px;display:block;">
         </div>
 
         <!-- Header image -->
