@@ -11,9 +11,34 @@ const stripe     = require('stripe')(process.env.STRIPE_SECRET_KEY);
 const { Resend } = require('resend');
 const Anthropic  = require('@anthropic-ai/sdk');
 const { Pool }   = require('pg');
+const bcrypt     = require('bcryptjs');
+const jwt        = require('jsonwebtoken');
+const crypto     = require('crypto');
 
 const resend    = new Resend(process.env.RESEND_API_KEY);
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+
+const JWT_SECRET  = process.env.JWT_SECRET || 'ifrtest-jwt-secret-2024';
+const JWT_EXPIRES = '30d';
+
+function signToken(email) {
+  return jwt.sign({ email }, JWT_SECRET, { expiresIn: JWT_EXPIRES });
+}
+
+function verifyToken(token) {
+  try { return jwt.verify(token, JWT_SECRET); }
+  catch { return null; }
+}
+
+function requireAuth(req, res, next) {
+  const auth = req.headers.authorization || '';
+  const token = auth.startsWith('Bearer ') ? auth.slice(7) : null;
+  if (!token) return res.status(401).json({ error: 'Not authenticated' });
+  const payload = verifyToken(token);
+  if (!payload) return res.status(401).json({ error: 'Invalid or expired token' });
+  req.userEmail = payload.email;
+  next();
+}
 
 // ─── Database ─────────────────────────────────────────────────────────────────
 const db = new Pool({
@@ -135,6 +160,151 @@ setInterval(() => {
     if (val.lastSeen < cutoff) freeUsageMap.delete(key);
   }
 }, 60 * 60 * 1000);
+
+// ─── POST /auth/set-password ──────────────────────────────────────────────────
+// Called after payment or by existing users to create/update their password.
+// Body: { sessionId, email, password }
+app.post('/auth/set-password', async (req, res) => {
+  const { sessionId, email, password } = req.body;
+  if (!email || !password) return res.status(400).json({ error: 'Email and password required.' });
+  if (password.length < 8) return res.status(400).json({ error: 'Password must be at least 8 characters.' });
+
+  try {
+    // Verify the student exists and has access
+    const { rows } = await db.query(
+      `SELECT * FROM students WHERE email = $1 AND access_granted = true ORDER BY created_at DESC LIMIT 1`,
+      [email.toLowerCase()]
+    );
+    // Also allow if sessionId matches (fresh payment not yet in DB)
+    let student = rows[0];
+    if (!student && sessionId) {
+      const { rows: r2 } = await db.query(
+        `SELECT * FROM students WHERE stripe_session_id = $1 LIMIT 1`,
+        [sessionId]
+      );
+      student = r2[0];
+    }
+    if (!student) return res.status(403).json({ error: 'No active subscription found for this email.' });
+
+    const hash = await bcrypt.hash(password, 10);
+    await db.query(
+      `UPDATE students SET password_hash = $1, updated_at = NOW() WHERE email = $2`,
+      [hash, email.toLowerCase()]
+    );
+    const token = signToken(email.toLowerCase());
+    res.json({ ok: true, token, email: email.toLowerCase(), plan: student.plan });
+  } catch (err) {
+    console.error('[auth/set-password]', err.message);
+    res.status(500).json({ error: 'Server error.' });
+  }
+});
+
+// ─── POST /auth/login ─────────────────────────────────────────────────────────
+app.post('/auth/login', async (req, res) => {
+  const { email, password } = req.body;
+  if (!email || !password) return res.status(400).json({ error: 'Email and password required.' });
+
+  try {
+    const { rows } = await db.query(
+      `SELECT * FROM students WHERE email = $1 ORDER BY created_at DESC LIMIT 1`,
+      [email.toLowerCase()]
+    );
+    const student = rows[0];
+    if (!student || !student.password_hash) {
+      return res.status(401).json({ error: 'No account found. Please set your password first.', needsPassword: true });
+    }
+    const ok = await bcrypt.compare(password, student.password_hash);
+    if (!ok) return res.status(401).json({ error: 'Incorrect email or password.' });
+    if (!student.access_granted) return res.status(403).json({ error: 'Your access has been revoked. Please contact support.' });
+
+    const token = signToken(email.toLowerCase());
+    res.json({ ok: true, token, email: email.toLowerCase(), plan: student.plan });
+  } catch (err) {
+    console.error('[auth/login]', err.message);
+    res.status(500).json({ error: 'Server error.' });
+  }
+});
+
+// ─── GET /auth/me ─────────────────────────────────────────────────────────────
+app.get('/auth/me', requireAuth, async (req, res) => {
+  try {
+    const { rows } = await db.query(
+      `SELECT email, plan, access_granted FROM students WHERE email = $1 LIMIT 1`,
+      [req.userEmail]
+    );
+    const student = rows[0];
+    if (!student || !student.access_granted) return res.status(403).json({ error: 'Access revoked.' });
+    res.json({ email: student.email, plan: student.plan });
+  } catch (err) {
+    res.status(500).json({ error: 'Server error.' });
+  }
+});
+
+// ─── POST /auth/forgot-password ───────────────────────────────────────────────
+app.post('/auth/forgot-password', async (req, res) => {
+  const { email } = req.body;
+  if (!email) return res.status(400).json({ error: 'Email required.' });
+
+  try {
+    const { rows } = await db.query(
+      `SELECT * FROM students WHERE email = $1 AND access_granted = true LIMIT 1`,
+      [email.toLowerCase()]
+    );
+    if (rows[0]) {
+      const token = crypto.randomBytes(32).toString('hex');
+      const expires = new Date(Date.now() + 1000 * 60 * 60); // 1 hour
+      await db.query(
+        `INSERT INTO password_reset_tokens (email, token, expires_at) VALUES ($1, $2, $3)`,
+        [email.toLowerCase(), token, expires]
+      );
+      const resetUrl = `${process.env.FRONTEND_URL}/reset-password.html?token=${token}`;
+      await resend.emails.send({
+        from: 'IFRTEST.ca <noreply@ifrtest.ca>',
+        to: email,
+        subject: 'Reset your IFRTEST.ca password ✈️',
+        html: `
+          <div style="background:#05080f;color:#e8edf5;font-family:Arial,sans-serif;padding:40px;max-width:600px;margin:0 auto;border-radius:8px;">
+            <h1 style="color:#00d4a0;font-size:24px;">Reset your password</h1>
+            <p style="color:rgba(200,210,230,0.75);line-height:1.7;">Click the button below to set a new password. This link expires in 1 hour.</p>
+            <div style="text-align:center;margin:32px 0;">
+              <a href="${resetUrl}" style="background:#00d4a0;color:#05080f;text-decoration:none;padding:14px 32px;border-radius:6px;font-weight:bold;font-size:16px;">Reset Password →</a>
+            </div>
+            <p style="color:rgba(200,210,230,0.4);font-size:13px;">If you didn't request this, ignore this email.</p>
+          </div>`,
+      });
+    }
+    res.json({ ok: true }); // Always return ok to prevent email enumeration
+  } catch (err) {
+    console.error('[auth/forgot-password]', err.message);
+    res.json({ ok: true });
+  }
+});
+
+// ─── POST /auth/reset-password ────────────────────────────────────────────────
+app.post('/auth/reset-password', async (req, res) => {
+  const { token, password } = req.body;
+  if (!token || !password) return res.status(400).json({ error: 'Token and password required.' });
+  if (password.length < 8) return res.status(400).json({ error: 'Password must be at least 8 characters.' });
+
+  try {
+    const { rows } = await db.query(
+      `SELECT * FROM password_reset_tokens WHERE token = $1 AND used = false AND expires_at > NOW()`,
+      [token]
+    );
+    const record = rows[0];
+    if (!record) return res.status(400).json({ error: 'Invalid or expired reset link.' });
+
+    const hash = await bcrypt.hash(password, 10);
+    await db.query(`UPDATE students SET password_hash = $1, updated_at = NOW() WHERE email = $2`, [hash, record.email]);
+    await db.query(`UPDATE password_reset_tokens SET used = true WHERE id = $1`, [record.id]);
+
+    const jwtToken = signToken(record.email);
+    res.json({ ok: true, token: jwtToken, email: record.email });
+  } catch (err) {
+    console.error('[auth/reset-password]', err.message);
+    res.status(500).json({ error: 'Server error.' });
+  }
+});
 
 app.get('/free-status', (req, res) => {
   const { fp } = req.query;
@@ -506,19 +676,23 @@ app.post('/admin/set-access', async (req, res) => {
 });
 
 // ─── POST /quiz-result ────────────────────────────────────────────────────────
-// Called by the quiz after each session to save results.
-// Body: { sessionId, score, correctCount, totalQuestions, passed, mode }
 app.post('/quiz-result', async (req, res) => {
   const { sessionId, score, correctCount, totalQuestions, passed, mode } = req.body;
-  if (!sessionId || score === undefined || !totalQuestions) {
-    return res.json({ ok: true });
-  }
+  if (score === undefined || !totalQuestions) return res.json({ ok: true });
   try {
-    const { rows } = await db.query(
-      `SELECT email FROM students WHERE stripe_session_id = $1 LIMIT 1`,
-      [sessionId]
-    );
-    const email = rows[0]?.email;
+    // Try JWT auth first, fall back to sessionId lookup
+    const auth = req.headers.authorization || '';
+    const token = auth.startsWith('Bearer ') ? auth.slice(7) : null;
+    const payload = token ? verifyToken(token) : null;
+    let email = payload?.email;
+
+    if (!email && sessionId) {
+      const { rows } = await db.query(
+        `SELECT email FROM students WHERE stripe_session_id = $1 LIMIT 1`,
+        [sessionId]
+      );
+      email = rows[0]?.email;
+    }
     if (email) {
       await dbSaveQuizSession({ email, score, correctCount, totalQuestions, passed, mode });
     }
