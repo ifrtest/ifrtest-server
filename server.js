@@ -14,6 +14,7 @@ const { Pool }   = require('pg');
 const bcrypt     = require('bcryptjs');
 const jwt        = require('jsonwebtoken');
 const crypto     = require('crypto');
+const https      = require('https');
 
 const resend    = new Resend(process.env.RESEND_API_KEY);
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
@@ -1167,7 +1168,8 @@ initDB().then(() => {
     // Keep-alive: ping own /health every 10 minutes so Render never goes cold
     const selfUrl = process.env.RENDER_EXTERNAL_URL || `http://localhost:${PORT}`;
     setInterval(() => {
-      fetch(`${selfUrl}/health`).catch(() => {});
+      const url = `${selfUrl}/health`;
+      (url.startsWith('https') ? https : require('http')).get(url, () => {}).on('error', () => {});
     }, 10 * 60 * 1000);
   });
 });
