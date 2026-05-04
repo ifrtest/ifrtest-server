@@ -1049,18 +1049,7 @@ app.post('/lead/cheatsheet', async (req, res) => {
   const em = email.toLowerCase().trim();
   const token = crypto.randomBytes(24).toString('hex');
 
-  // Ensure leads table exists with verify columns
   try {
-    await db.query(`CREATE TABLE IF NOT EXISTS leads (
-      email TEXT PRIMARY KEY,
-      source TEXT,
-      verified BOOLEAN DEFAULT FALSE,
-      verify_token TEXT,
-      created_at TIMESTAMPTZ DEFAULT NOW()
-    )`);
-    // Add columns if table existed without them
-    await db.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS verified BOOLEAN DEFAULT FALSE`);
-    await db.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS verify_token TEXT`);
     await db.query(
       `INSERT INTO leads (email, source, verified, verify_token, created_at)
        VALUES ($1, 'cheatsheet', FALSE, $2, NOW())
@@ -1129,7 +1118,27 @@ app.get('/lead/verify', async (req, res) => {
 
 // ─── Start server ─────────────────────────────────────────────────────────────
 const PORT = process.env.PORT || 3001;
-app.listen(PORT, () => {
-  console.log(`✓ IFRTEST Stripe server running on port ${PORT}`);
-  console.log(`  Allowed origins: ${allowedOrigins.join(', ') || '(none set — check FRONTEND_URL in .env)'}`);
+
+async function initDB() {
+  try {
+    await db.query(`CREATE TABLE IF NOT EXISTS leads (
+      email TEXT PRIMARY KEY,
+      source TEXT,
+      verified BOOLEAN DEFAULT FALSE,
+      verify_token TEXT,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    )`);
+    await db.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS verified BOOLEAN DEFAULT FALSE`).catch(() => {});
+    await db.query(`ALTER TABLE leads ADD COLUMN IF NOT EXISTS verify_token TEXT`).catch(() => {});
+    console.log('✓ leads table ready');
+  } catch (e) {
+    console.error('initDB error:', e.message);
+  }
+}
+
+initDB().then(() => {
+  app.listen(PORT, () => {
+    console.log(`✓ IFRTEST Stripe server running on port ${PORT}`);
+    console.log(`  Allowed origins: ${allowedOrigins.join(', ') || '(none set — check FRONTEND_URL in .env)'}`);
+  });
 });
