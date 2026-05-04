@@ -987,7 +987,7 @@ app.post('/webhook', express.raw({ type: 'application/json' }), (req, res) => {
 
 // ─── Lead capture: cheat sheet (double opt-in) ────────────────────────────────
 function cheatsheetEmail(token) {
-  const verifyUrl = `${FRONTEND_URL}/verify-lead.html?token=${token}`;
+  const verifyUrl = `https://ifrtest-server.onrender.com/lead/verify?token=${token}`;
   return `
   <div style="background:#05080f;color:#e8edf5;font-family:Arial,sans-serif;max-width:580px;margin:0 auto;border-radius:8px;overflow:hidden;">
     <div style="background:#05080f;padding:18px 40px;border-bottom:1px solid rgba(0,212,160,0.15);">
