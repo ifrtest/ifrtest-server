@@ -1057,8 +1057,8 @@ app.post('/lead/cheatsheet', async (req, res) => {
       [em, token]
     );
   } catch (e) {
-    console.error('Lead save error:', e.message);
-    return res.status(500).json({ error: 'Could not save.', detail: e.message });
+    console.error('Lead save error:', e.code, e.message, e.detail);
+    return res.status(500).json({ error: 'Could not save.', code: e.code, detail: e.message || e.detail || String(e) });
   }
 
   // Send verification email
