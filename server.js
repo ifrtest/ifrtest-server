@@ -343,11 +343,11 @@ app.post('/create-checkout-session', async (req, res) => {
       line_items: [
         {
           price: isMonthly
-            ? (new Date() >= new Date('2026-06-01T00:00:00') && process.env.STRIPE_MONTHLY_PRICE_ID_NEW
-                ? process.env.STRIPE_MONTHLY_PRICE_ID_NEW
+            ? (new Date() >= new Date('2026-06-01T00:00:00')
+                ? 'price_1TTRk7HY920PM5Keb5R3O0qD'
                 : process.env.STRIPE_MONTHLY_PRICE_ID)
-            : (new Date() >= new Date('2026-06-01T00:00:00') && process.env.STRIPE_LIFETIME_PRICE_ID_NEW
-                ? process.env.STRIPE_LIFETIME_PRICE_ID_NEW
+            : (new Date() >= new Date('2026-06-01T00:00:00')
+                ? 'price_1TTRnRHY920PM5Ke7orC8Knm'
                 : process.env.STRIPE_LIFETIME_PRICE_ID),
           quantity: 1,
         },
