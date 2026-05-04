@@ -325,40 +325,41 @@ app.post('/track-free', (req, res) => {
 });
 
 // ─── POST /create-checkout-session ────────────────────────────────────────────
-// Called by the frontend when a user clicks "Get Pro Access".
-// Body: { plan: 'monthly' | 'lifetime' }
+// Called by the frontend when a user clicks "Pay with Stripe".
+// Body: { plan: 'monthly' | 'lifetime', email?: string }
 // Returns: { url: 'https://checkout.stripe.com/...' }
 app.post('/create-checkout-session', async (req, res) => {
-  const { plan } = req.body;
+  const { plan, email } = req.body;
 
   if (plan !== 'monthly' && plan !== 'lifetime') {
     return res.status(400).json({ error: 'Invalid plan. Must be "monthly" or "lifetime".' });
   }
 
-  const isMonthly = plan === 'monthly';
+  const isMonthly  = plan === 'monthly';
+  const priceSwitch = new Date() >= new Date('2026-06-01T00:00:00');
 
   try {
-    const session = await stripe.checkout.sessions.create({
+    const sessionParams = {
       mode: isMonthly ? 'subscription' : 'payment',
       line_items: [
         {
           price: isMonthly
-            ? (new Date() >= new Date('2026-06-01T00:00:00')
-                ? 'price_1TTT5iHY920PM5KevHfCHyLj'
-                : process.env.STRIPE_MONTHLY_PRICE_ID)
-            : (new Date() >= new Date('2026-06-01T00:00:00')
-                ? 'price_1TTRnRHY920PM5Ke7orC8Knm'
-                : process.env.STRIPE_LIFETIME_PRICE_ID),
+            ? (priceSwitch ? 'price_1TTT5iHY920PM5KevHfCHyLj' : process.env.STRIPE_MONTHLY_PRICE_ID)
+            : (priceSwitch ? 'price_1TTRnRHY920PM5Ke7orC8Knm' : process.env.STRIPE_LIFETIME_PRICE_ID),
           quantity: 1,
         },
       ],
-      // After payment, Stripe appends ?session_id={CHECKOUT_SESSION_ID} automatically
       success_url: `${FRONTEND_URL}/payment_success.html?session_id={CHECKOUT_SESSION_ID}`,
-      cancel_url:  `${FRONTEND_URL}/index.html#pricing`,
-      // Let Stripe collect the billing address for Canadian tax compliance
+      cancel_url:  `${FRONTEND_URL}/checkout.html?plan=${plan}&cancelled=1`,
       billing_address_collection: 'auto',
-    });
+    };
 
+    // Pre-fill email on Stripe's hosted page if provided
+    if (email && typeof email === 'string' && email.includes('@')) {
+      sessionParams.customer_email = email.toLowerCase().trim();
+    }
+
+    const session = await stripe.checkout.sessions.create(sessionParams);
     res.json({ url: session.url });
   } catch (err) {
     console.error('[create-checkout-session]', err.message);
