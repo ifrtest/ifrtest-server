@@ -343,8 +343,12 @@ app.post('/create-checkout-session', async (req, res) => {
       line_items: [
         {
           price: isMonthly
-            ? process.env.STRIPE_MONTHLY_PRICE_ID
-            : process.env.STRIPE_LIFETIME_PRICE_ID,
+            ? (new Date() >= new Date('2026-06-01T00:00:00') && process.env.STRIPE_MONTHLY_PRICE_ID_NEW
+                ? process.env.STRIPE_MONTHLY_PRICE_ID_NEW
+                : process.env.STRIPE_MONTHLY_PRICE_ID)
+            : (new Date() >= new Date('2026-06-01T00:00:00') && process.env.STRIPE_LIFETIME_PRICE_ID_NEW
+                ? process.env.STRIPE_LIFETIME_PRICE_ID_NEW
+                : process.env.STRIPE_LIFETIME_PRICE_ID),
           quantity: 1,
         },
       ],
