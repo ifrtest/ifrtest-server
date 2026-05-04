@@ -580,6 +580,27 @@ app.post('/verify-email', async (req, res) => {
   }
 });
 
+// ─── Cancel subscription ──────────────────────────────────────────────────────
+app.post('/cancel-subscription', requireAuth, async (req, res) => {
+  const email = req.user.email;
+  try {
+    const customers = await stripe.customers.list({ email: email.toLowerCase().trim(), limit: 5 });
+    for (const customer of customers.data) {
+      const subscriptions = await stripe.subscriptions.list({ customer: customer.id, status: 'active', limit: 5 });
+      for (const sub of subscriptions.data) {
+        await stripe.subscriptions.update(sub.id, { cancel_at_period_end: true });
+        const periodEnd = new Date(sub.current_period_end * 1000).toLocaleDateString('en-CA', { year: 'numeric', month: 'long', day: 'numeric' });
+        console.log('[cancel-subscription] cancelled at period end for', email, '- access until', periodEnd);
+        return res.json({ ok: true, accessUntil: periodEnd });
+      }
+    }
+    return res.status(404).json({ error: 'No active subscription found.' });
+  } catch (err) {
+    console.error('[cancel-subscription]', err.message);
+    return res.status(500).json({ error: 'Could not cancel subscription.' });
+  }
+});
+
 // ─── Email helpers ────────────────────────────────────────────────────────────
 async function sendWelcomeEmail(to, plan, isNewUser = true) {
   if (!process.env.RESEND_API_KEY) {
