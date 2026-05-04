@@ -1165,6 +1165,36 @@ async function initDB() {
 
 app.get('/health', (req, res) => res.json({ ok: true }));
 
+// ─── POST /contact ────────────────────────────────────────────────────────────
+// Checkout page help form — forwards message to support inbox via Resend.
+app.post('/contact', async (req, res) => {
+  const { email, message } = req.body;
+  if (!email || !email.includes('@') || !message || message.trim().length < 3) {
+    return res.status(400).json({ error: 'Email and message required.' });
+  }
+  try {
+    await resend.emails.send({
+      from:     'IFRTEST.ca <noreply@ifrtest.ca>',
+      to:       'ifrtest.ca@gmail.com',
+      reply_to: email.trim(),
+      subject:  `Checkout help request from ${email.trim()}`,
+      html: `
+        <div style="font-family:Arial,sans-serif;max-width:560px;margin:0 auto;padding:32px;background:#05080f;color:#e8edf5;border-radius:8px;">
+          <h2 style="color:#00d4a0;margin:0 0 16px;">Checkout Help Request</h2>
+          <p style="margin:0 0 8px;color:rgba(200,210,230,0.6);font-size:13px;">From: <strong style="color:#e8edf5;">${email.trim()}</strong></p>
+          <div style="background:#0d1320;border:1px solid rgba(0,212,160,0.15);border-radius:6px;padding:16px;margin-top:16px;font-size:15px;line-height:1.7;color:#e8edf5;">
+            ${message.trim().replace(/\n/g, '<br>')}
+          </div>
+          <p style="margin:20px 0 0;color:rgba(200,210,230,0.35);font-size:12px;">Hit reply to respond directly to the customer.</p>
+        </div>`,
+    });
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('[contact]', err.message);
+    res.status(500).json({ error: 'Could not send message.' });
+  }
+});
+
 initDB().then(() => {
   app.listen(PORT, () => {
     console.log(`✓ IFRTEST Stripe server running on port ${PORT}`);
