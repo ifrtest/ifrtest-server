@@ -1057,7 +1057,7 @@ function cheatsheetDeliveryEmail() {
       </div>
       <div style="background:rgba(0,212,160,0.08);border-left:3px solid #00d4a0;padding:14px 18px;margin:0 0 28px;border-radius:0 6px 6px 0;">
         <p style="margin:0;color:#e8edf5;font-size:14px;font-weight:600;">Want all 513 INRAT questions?</p>
-        <p style="margin:6px 0 0;color:rgba(200,210,230,0.6);font-size:13px;line-height:1.6;">Get Pro access for $14.99/mo — price goes to $37/mo on June 1st. Timed simulator, AI Instructor, flashcards, and full explanations on every question.</p>
+        <p style="margin:6px 0 0;color:rgba(200,210,230,0.6);font-size:13px;line-height:1.6;">${new Date() >= new Date('2026-06-01') ? 'Get Pro access for $37/mo.' : 'Get Pro access for $14.99/mo — price goes to $37/mo on June 1st.'} Timed simulator, AI Instructor, flashcards, and full explanations on every question.</p>
         <a href="https://ifrtest.ca/#pricing" style="display:inline-block;margin-top:10px;color:#00d4a0;font-size:13px;font-weight:600;text-decoration:none;">See pricing →</a>
       </div>
       <div style="border-top:1px solid rgba(255,255,255,0.06);padding-top:20px;">
