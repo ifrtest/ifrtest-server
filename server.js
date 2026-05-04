@@ -1157,9 +1157,17 @@ async function initDB() {
   }
 }
 
+app.get('/health', (req, res) => res.json({ ok: true }));
+
 initDB().then(() => {
   app.listen(PORT, () => {
     console.log(`✓ IFRTEST Stripe server running on port ${PORT}`);
     console.log(`  Allowed origins: ${allowedOrigins.join(', ') || '(none set — check FRONTEND_URL in .env)'}`);
+
+    // Keep-alive: ping own /health every 10 minutes so Render never goes cold
+    const selfUrl = process.env.RENDER_EXTERNAL_URL || `http://localhost:${PORT}`;
+    setInterval(() => {
+      fetch(`${selfUrl}/health`).catch(() => {});
+    }, 10 * 60 * 1000);
   });
 });
