@@ -15,6 +15,7 @@ const bcrypt     = require('bcryptjs');
 const jwt        = require('jsonwebtoken');
 const crypto     = require('crypto');
 const https      = require('https');
+const path       = require('path');
 
 const resend    = new Resend(process.env.RESEND_API_KEY);
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
@@ -604,6 +605,28 @@ app.post('/cancel-subscription', requireAuth, async (req, res) => {
   } catch (err) {
     console.error('[cancel-subscription]', err.message);
     return res.status(500).json({ error: 'Could not cancel subscription.' });
+  }
+});
+
+// ─── GET /api/questions ───────────────────────────────────────────────────────
+// Returns full question set. Requires valid JWT + access_granted = true in DB.
+// Non-paying users can never access this — setting localStorage manually won't work.
+app.get('/api/questions', requireAuth, async (req, res) => {
+  const email = req.user.email;
+  try {
+    const result = await db.query(
+      'SELECT access_granted FROM students WHERE email = $1 ORDER BY created_at DESC LIMIT 1',
+      [email]
+    );
+    if (!result.rows.length || !result.rows[0].access_granted) {
+      return res.status(403).json({ error: 'No active subscription found.' });
+    }
+    const questionsPath = path.join(__dirname, 'questions_data.json');
+    const questions = require(questionsPath);
+    res.json({ questions });
+  } catch (err) {
+    console.error('[api/questions]', err.message);
+    res.status(500).json({ error: 'Server error loading questions.' });
   }
 });
 
