@@ -15,6 +15,7 @@ const bcrypt     = require('bcryptjs');
 const jwt        = require('jsonwebtoken');
 const crypto     = require('crypto');
 const https      = require('https');
+const path       = require('path');
 
 const resend    = new Resend(process.env.RESEND_API_KEY);
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
@@ -604,6 +605,31 @@ app.post('/cancel-subscription', requireAuth, async (req, res) => {
   } catch (err) {
     console.error('[cancel-subscription]', err.message);
     return res.status(500).json({ error: 'Could not cancel subscription.' });
+  }
+});
+
+// ─── GET /api/questions ───────────────────────────────────────────────────────
+// Returns full 513-question set. Requires valid JWT token.
+// Admin email (ifrtest.ca@gmail.com) always has access.
+// All others must have access_granted = true in the database (active subscription).
+app.get('/api/questions', requireAuth, async (req, res) => {
+  const email = req.userEmail;
+  try {
+    const ADMIN_EMAIL = 'ifrtest.ca@gmail.com';
+    if (email !== ADMIN_EMAIL) {
+      const result = await db.query(
+        'SELECT access_granted FROM students WHERE email = $1 ORDER BY created_at DESC LIMIT 1',
+        [email]
+      );
+      if (!result.rows.length || !result.rows[0].access_granted) {
+        return res.status(403).json({ error: 'No active subscription found.' });
+      }
+    }
+    const questions = require(path.join(__dirname, 'questions_data.json'));
+    res.json({ questions });
+  } catch (err) {
+    console.error('[api/questions]', err.message);
+    res.status(500).json({ error: 'Server error loading questions.' });
   }
 });
 
