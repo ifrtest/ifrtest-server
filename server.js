@@ -566,14 +566,14 @@ app.post('/verify-email', async (req, res) => {
         // Lifetime purchase
         if (session.mode === 'payment' && session.payment_status === 'paid') {
           console.log('[verify-email] lifetime access granted for', email);
-          return res.json({ success: true, plan: 'lifetime', sessionId: session.id });
+          return res.json({ success: true, plan: 'lifetime', sessionId: session.id, token: signToken(email.toLowerCase().trim()) });
         }
         // Monthly subscription — check it's still active
         if (session.mode === 'subscription' && session.subscription) {
           const sub = session.subscription;
           if (['active', 'trialing', 'past_due'].includes(sub.status)) {
             console.log('[verify-email] subscription access granted for', email, '- status:', sub.status);
-            return res.json({ success: true, plan: 'monthly', sessionId: session.id });
+            return res.json({ success: true, plan: 'monthly', sessionId: session.id, token: signToken(email.toLowerCase().trim()) });
           }
         }
       }
