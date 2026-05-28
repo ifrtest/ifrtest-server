@@ -608,6 +608,63 @@ app.post('/cancel-subscription', requireAuth, async (req, res) => {
   }
 });
 
+// ─── GET /admin/payments ──────────────────────────────────────────────────────
+// Returns all Stripe subscriptions + lifetime purchases with renewal/expiry dates.
+app.get('/admin/payments', async (req, res) => {
+  const ADMIN_SECRET = process.env.ADMIN_SECRET || 'ifrtest-admin-2024';
+  if (req.query.secret !== ADMIN_SECRET) return res.status(403).json({ error: 'Forbidden' });
+  try {
+    const payments = [];
+
+    // Monthly subscriptions
+    let subPage = await stripe.subscriptions.list({ limit: 100, status: 'all', expand: ['data.customer'] });
+    for (const sub of subPage.data) {
+      const email = typeof sub.customer === 'object' ? sub.customer.email : null;
+      const item  = sub.items.data[0];
+      payments.push({
+        email:             email || '—',
+        plan:              'monthly',
+        amount:            item ? (item.price.unit_amount / 100).toFixed(2) : '—',
+        currency:          item ? item.price.currency.toUpperCase() : '—',
+        status:            sub.status,
+        cancelAtPeriodEnd: sub.cancel_at_period_end,
+        periodEnd:         sub.current_period_end,
+        periodStart:       sub.current_period_start,
+        created:           sub.created,
+      });
+    }
+
+    // Lifetime (one-time) purchases
+    let sessionPage = await stripe.checkout.sessions.list({ limit: 100, expand: ['data.customer_details'] });
+    for (const session of sessionPage.data) {
+      if (session.mode === 'payment' && session.payment_status === 'paid') {
+        const email = session.customer_details?.email || '—';
+        // Skip if already captured as a subscription
+        if (!payments.find(p => p.email === email && p.plan === 'lifetime')) {
+          payments.push({
+            email,
+            plan:             'lifetime',
+            amount:           (session.amount_total / 100).toFixed(2),
+            currency:         (session.currency || 'cad').toUpperCase(),
+            status:           'paid',
+            cancelAtPeriodEnd: false,
+            periodEnd:        null,
+            periodStart:      null,
+            created:          session.created,
+          });
+        }
+      }
+    }
+
+    // Sort newest first
+    payments.sort((a, b) => b.created - a.created);
+    res.json({ payments });
+  } catch (err) {
+    console.error('[admin/payments]', err.message);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
 // ─── GET /api/questions ───────────────────────────────────────────────────────
 // Returns full 513-question set. Requires valid JWT token.
 // Admin email (ifrtest.ca@gmail.com) always has access.
