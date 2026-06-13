@@ -957,6 +957,11 @@ app.post('/checkout/create-intent', async (req, res) => {
   try {
     const lc = email.toLowerCase().trim();
 
+    // Price switch: June 1 2026 — monthly goes from $14.99 to $24.99, lifetime from $79 to $99
+    const priceSwitch = new Date() >= new Date('2026-06-01T00:00:00');
+    const monthlyPriceId = priceSwitch ? 'price_1TTT5iHY920PM5KevHfCHyLj' : process.env.STRIPE_MONTHLY_PRICE_ID;
+    const lifetimeAmount = priceSwitch ? 9900 : 7900;
+
     // Find or create Stripe customer
     const existing = await stripe.customers.list({ email: lc, limit: 1 });
     let customer = existing.data[0];
@@ -972,7 +977,7 @@ app.post('/checkout/create-intent', async (req, res) => {
       }
       const subscription = await stripe.subscriptions.create({
         customer: customer.id,
-        items: [{ price: process.env.STRIPE_MONTHLY_PRICE_ID }],
+        items: [{ price: monthlyPriceId }],
         payment_behavior: 'default_incomplete',
         payment_settings: { save_default_payment_method: 'on_subscription' },
         expand: ['latest_invoice.payment_intent'],
@@ -983,7 +988,7 @@ app.post('/checkout/create-intent', async (req, res) => {
 
     // Lifetime one-time payment
     const pi = await stripe.paymentIntents.create({
-      amount: 7900,
+      amount: lifetimeAmount,
       currency: 'cad',
       customer: customer.id,
       metadata: { plan: 'lifetime', email: lc },
